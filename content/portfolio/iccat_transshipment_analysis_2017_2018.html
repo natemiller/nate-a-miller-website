@@ -49,12 +49,14 @@ here we are using loitering events as any period where the carrier vessel is tra
 at less than 2 knots for at least 2 hours. Note that this 2 hour time period is different
 than the 8 hours that has been used in other GFW publications. This was because we
 found that the 8 hour rule meant that we were unable to match a large number of actual
-transshipments. This is important because while globally there are large number of 8 hour loitering
+transshipments <a href="Loitering%20Matches%20(8%20hour)">shown here</a>. This is important because while
+globally there are large number of 8 hour loitering
 events there are even more 2 hour loitering events. We found that using this new
 definition of loitering that on average roughly 81% of the observered transshipment
 events were matched to a GFW loitering event (mean: 0.8112678, median: 0.8823529,
 range (by vessel and voyage): 0.3111111 to 1). We outline all matched loitering events
-<a href="Loitering%20Events">here</a> and again summarize the matching by vessel and voyage <a href="Loitering%20Events%20Matched%20to%20Observered%20Transshipment">here</a></p>
+<a href="Loitering%20Events">here</a> and again summarize the matching by vessel and voyage
+<a href="Loitering%20Events%20Matched%20to%20Observered%20Transshipment">here</a></p>
 </div>
 <div id="intervessel-matching-differences" class="section level5">
 <h5>Intervessel Matching Differences</h5>
@@ -1415,6 +1417,72 @@ matched, but doesn’t actually meet this requirement.</p>
   )</code></pre>
 <p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-56-1.png" width="3600" /></p>
 </div>
+</div>
+<div id="reanalysis-using-8-hour-minimum-loitering-event" class="section level3">
+<h3>Reanalysis using 8 hour minimum loitering event</h3>
+<pre class="r"><code># loop through all the vessels and generate plots as long as the
+# vessel track data is available in a list
+
+loitering_data_8 &lt;- loitering_data %&gt;%
+  filter(tot_hours &gt; 8)
+
+
+iccat_2017_2018_events_8h &lt;- purrr::set_names(purrr::pmap(
+  .l = list(
+    mmsi = iccat_reefer_ids$mmsi,
+    vessel_id = iccat_reefer_ids$vessel_id,
+    vessel_name = iccat_reefer_ids$vessel,
+    start_date = iccat_reefer_ids$voyage_start,
+    end_date = iccat_reefer_ids$voyage_end,
+    vessel_track_data = vessel_track_data
+  ),
+  .f = iccat_events_plotting,
+  iccat_data = iccat_obs_fish_2017_2018,
+  encounters_data = fishing_encounters_2017_2018,
+  loitering_data = loitering_data_8,
+  shp_list = shp_list
+), paste0(iccat_reefer_ids$vessel, &quot; &quot;, iccat_reefer_ids$voyage_start))</code></pre>
+<pre class="r"><code>loitering_match_list_8h &lt;- list()
+# transshipment_encounters_match &lt;- list()
+# transshipment_loiter_match &lt;- list()
+
+for (i in seq_len(length(iccat_2017_2018_events_8h))) {
+  loitering_match_list_8h[names(iccat_2017_2018_events_8h[i])] &lt;-
+    list(loitering_matches(
+      iccat_2017_2018_events_8h[[i]]$reported_transshipment,
+      iccat_2017_2018_events_8h[[i]]$loitering
+    ))
+  # transshipment_encounters_match[names(iccat_2017_2018_events[i])] &lt;-
+  #                list(match_obs_encounters(iccat_2017_2018_events[[i]]$reported_transshipment,
+  #                                         iccat_2017_2018_events[[i]]$encounters))
+  #  transshipment_loiter_match[names(iccat_2017_2018_events[i])] &lt;-
+  #                list(match_obs_loitering(iccat_2017_2018_events[[i]]$reported_transshipment,
+  #                                        iccat_2017_2018_events[[i]]$loitering))
+}
+
+loiter_match_tot_8h &lt;- dplyr::bind_rows(loitering_match_list_8h, .id = &quot;column_label&quot;)</code></pre>
+</div>
+<div id="loitering-matches-8-hour" class="section level3">
+<h3>Loitering Matches (8 hour)</h3>
+<p>With 8 hour with minimum duration for loitering events the number of matches decreases
+considerably.</p>
+<pre class="r"><code>loitering_match_counts_8h &lt;- loiter_match_tot_8h %&gt;%
+  #filter(column_label == &#39;FUTAGAMI 2017-10-28&#39;) %&gt;%
+  group_by(column_label, match, trans_date, trans_lat, trans_lon) %&gt;%
+  summarize(min_distance = min(min_dist)) %&gt;%
+  group_by(column_label) %&gt;%
+  summarise(matches = sum(match)) 
+
+loitering_match_frac_8h &lt;- loitering_match_counts_8h %&gt;%
+  inner_join(events, by = c(&#39;column_label&#39; = &#39;column_label&#39;)) %&gt;%
+  mutate(frac_match = matches/n)</code></pre>
+<pre class="r"><code>widgetframe::frameWidget(DT::datatable(loitering_match_frac_8h, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %&gt;%
+                           DT::formatStyle(colnames(loitering_match_frac_8h), fontSize = &#39;65%&#39;),
+                         height = 350, width = &#39;100%&#39;)</code></pre>
+<div id="htmlwidget-10" style="width:100%;height:350px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-10">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-60.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
 </div>
 </div>
 <div id="extra" class="section level2">
