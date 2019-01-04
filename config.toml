@@ -51,5 +51,4 @@ googleAnalytics = ""
   linkedin      = "full profile url in linkedin"
   github        = "full profile url in github"
   
- 
   ignoreFiles = ["\\.Rmd$", "\\.Rmarkdown$", "_files$", "_cache$"]
