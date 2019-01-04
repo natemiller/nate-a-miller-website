@@ -79,6 +79,8 @@ library(tidyverse)
 library(sf)
 library(knitr)
 library(extrafont)
+library(DT)
+
 BQ_connection <-  dbConnect(bigquery(), project = "world-fishing-827", use_legacy_sql = FALSE)
 ```
 
@@ -698,7 +700,13 @@ iccat_reefer_ids <- iccat_obs_fish_2017_2018 %>%
   left_join(vessel_identity, by = "callsign") %>% # above
   left_join(iccat_voyage_limits, by = "vessel") # from beginning
 
-DT::datatable(iccat_reefer_ids)
+
+widgetframe::frameWidget(DT::datatable(iccat_reefer_ids, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5,
+                                                      lengthMenu = c(5, 10, 15, 20))) %>%
+                           DT::formatStyle(colnames(iccat_reefer_ids), fontSize = '65%'),
+                         height = 450, width = '100%')
 ```
 
 #### Run the query functions to get events and vessel track data
@@ -1226,14 +1234,22 @@ loiter_match_tot <- dplyr::bind_rows(loitering_match_list, .id = "column_label")
 #### Total Matching
 
 ##### Encounters
-```{r}
-DT::datatable(encounters_match_tot)
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(encounters_match_tot, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(encounters_match_tot), fontSize = '65%'),
+                         height = 450, width = '100%')
 ```
 
 
 ##### Loitering Events
-```{r}
-DT::datatable(loiter_match_tot)
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(loiter_match_tot, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(loiter_match_tot), fontSize = '65%'),
+                         height = 450, width = '100%')
 ```
 
 
@@ -1246,7 +1262,14 @@ DT::datatable(loiter_match_tot)
 events <- iccat_obs_fish_2017_2018 %>% 
   group_by(column_label) %>% 
   count()
-DT::datatable(events)
+```
+
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(events, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(events), fontSize = '65%'),
+                         height = 450, width = '100%')
 
 ```
 
@@ -1270,11 +1293,18 @@ encounters_match_counts <- encounters_match_tot %>%
   group_by(column_label) %>%
   summarise(matches = sum(match))
 
-DT::datatable(encounters_match_counts %>%
-  inner_join(events, by = c("column_label" = "column_label")) %>%
-  mutate(frac_match = matches / n)) # %>%
-# summarize(median(frac_match))
+encounter_obs_frac <- encounters_match_counts %>%
+  inner_join(events, 
+             by = "column_label") %>%
+  mutate(frac_match = matches / n)
+```
 
+```{r , echo=FALSE}
+widgetframe::frameWidget(DT::datatable(encounter_obs_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(encounter_obs_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
 # 0.2986888 mean
 ```
 
@@ -1294,11 +1324,18 @@ loitering_match_counts <- loiter_match_tot %>%
   group_by(column_label) %>%
   summarise(matches = sum(match)) 
 
-DT::datatable(loitering_match_counts %>%
-  inner_join(events, by = c('column_label' = 'column_label')) %>%
-  mutate(frac_match = matches/n)) # %>%
-  #summarise(min(frac_match))
+loiter_obs_frac <- loitering_match_counts %>%
+  inner_join(events, 
+             by = 'column_label') %>%
+  mutate(frac_match = matches/n)
+```
 
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(loiter_obs_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(loiter_obs_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
 # 0.8112678 mean
 # 0.8823529 median
 # 0.3111111 - 1 :range
@@ -1334,11 +1371,22 @@ tot_encounters <- df %>%
 matched_encounters <- encounters_match_tot %>%
   group_by(column_label) %>%
   summarize(match = sum(match))
+```
 
 
-DT::datatable(matched_encounters %>%
-  inner_join(tot_encounters, by = "column_label") %>%
-  mutate(frac_match = match / n))
+```{r}
+encounter_match_frac <- matched_encounters %>%
+  inner_join(tot_encounters,
+             by = "column_label") %>%
+  mutate(frac_match = match / n)
+```
+
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(encounter_match_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(encounter_match_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
 ```
 
 
@@ -1358,10 +1406,23 @@ total_loitering_events <- loiter_match_tot %>%
            loit_start_longitude,loit_end_latitude, loit_end_longitude) %>%
   group_by(column_label) %>%
   count()
+```
 
-DT::datatable(loitering_match_counts %>%
-  inner_join(total_loitering_events, by = c('column_label' = 'column_label')) %>%
-  mutate(frac_match = matches/n))
+
+```{r}
+loiter_match_frac <- loitering_match_counts %>%
+  inner_join(total_loitering_events, 
+             by = 'column_label') %>%
+  mutate(frac_match = matches/n)
+```
+
+```{r, echo=FALSE}
+
+widgetframe::frameWidget(DT::datatable(loiter_match_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(loiter_match_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
 ```
 
 

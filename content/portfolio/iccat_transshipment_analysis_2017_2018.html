@@ -1,0 +1,1449 @@
+---
+title: "ICCAT Observer Data Comparison 2017-2018"
+author: "Nate Miller"
+tags:
+- transshipment
+- ICCAT
+categories: R
+---
+
+<script src="/rmarkdown-libs/htmlwidgets/htmlwidgets.js"></script>
+<script src="/rmarkdown-libs/jquery/jquery.min.js"></script>
+<link href="/rmarkdown-libs/leaflet/leaflet.css" rel="stylesheet" />
+<script src="/rmarkdown-libs/leaflet/leaflet.js"></script>
+<link href="/rmarkdown-libs/leafletfix/leafletfix.css" rel="stylesheet" />
+<script src="/rmarkdown-libs/Proj4Leaflet/proj4-compressed.js"></script>
+<script src="/rmarkdown-libs/Proj4Leaflet/proj4leaflet.js"></script>
+<link href="/rmarkdown-libs/rstudio_leaflet/rstudio_leaflet.css" rel="stylesheet" />
+<script src="/rmarkdown-libs/leaflet-binding/leaflet.js"></script>
+<script src="/rmarkdown-libs/leaflet-providers/leaflet-providers.js"></script>
+<script src="/rmarkdown-libs/leaflet-providers-plugin/leaflet-providers-plugin.js"></script>
+<script src="/rmarkdown-libs/pymjs/pym.v1.js"></script>
+<script src="/rmarkdown-libs/widgetframe-binding/widgetframe.js"></script>
+
+
+<div id="take-home" class="section level4">
+<h4>Take-home</h4>
+<p>This is an analysis of the observer reported transshipments from ICCAT. These
+events were recorded between 2017 and mid-2018. The attempt is made here to determine
+how well the GFW events (encounters/likely transshipments and loitering events)
+approximate actual events. This was done by identifying the proximity of these events to
+actual observer reported transshipments.</p>
+<div id="transshipment-features" class="section level5">
+<h5>Transshipment Features</h5>
+<p>We found that transshipment events generall occur quickly with most requring 1-2 hours
+median: 132.5 minutes) and the vast majority less than 6 hours. There is a strong linear
+relationship between transshipment duration and the amount of catch transferred with an
+adjusted R-square of 0.864. See the section called</p>
+</div>
+<div id="encounter-matching" class="section level5">
+<h5>Encounter Matching</h5>
+<p>We found that on average less than 30% of the actual transshipments are identified by
+GFW encounters (mean: 0.2986888, median: 0.2526596, range: 0.0625 to 0.8571). We
+outline all the matches here <a href="#encounters">Encounters</a> and summarize the by vessel and voyage <a href="Encounters%20Matched%20by%20Observered%20Transshipment">here</a></p>
+</div>
+<div id="loitering-matching" class="section level5">
+<h5>Loitering Matching</h5>
+<p>Loitering events match reported transshipment much better. It must be pointed out that
+here we are using loitering events as any period where the carrier vessel is travelling
+at less than 2 knots for at least 2 hours. Note that this 2 hour time period is different
+than the 8 hours that has been used in other GFW publications. This was because we
+found that the 8 hour rule meant that we were unable to match a large number of actual
+transshipments. This is important because while globally there are large number of 8 hour loitering
+events there are even more 2 hour loitering events. We found that using this new
+definition of loitering that on average roughly 81% of the observered transshipment
+events were matched to a GFW loitering event (mean: 0.8112678, median: 0.8823529,
+range (by vessel and voyage): 0.3111111 to 1). We outline all matched loitering events
+<a href="Loitering%20Events">here</a> and again summarize the matching by vessel and voyage <a href="Loitering%20Events%20Matched%20to%20Observered%20Transshipment">here</a></p>
+</div>
+<div id="intervessel-matching-differences" class="section level5">
+<h5>Intervessel Matching Differences</h5>
+<p>As evidence by the range is that some vessels/voyages have better matching than others.
+In fact it appears that several carrier vessels consistently have poorer matching with
+our current algorithms. <code>TAISEI MARU NO 15</code>, <code>TAISEI MARU NO 24</code> perform poorly consistently.
+We still need to explore why this is, though there are some possibilities. With <a href="TAISEI%20MARU%20NO%2024">TAISEI MARU NO 24</a> and
+<a href="TAISEI%20MARU%20NO%2015">TAISEI MARU NO 15</a> shown here.</p>
+<ol style="list-style-type: decimal">
+<li>these vessels conduct transshipments in a different manner which requires different rules<br />
+</li>
+<li>with regards to encounters, these vessels may operate with fishing vessels that do not
+use AIS or turn it off during transshipment.<br />
+</li>
+<li>these vessels tend to operate in regions where AIS reception is lower and thus it is
+harder to detect events because of reception issues/gaps.</li>
+</ol>
+</div>
+<div id="matching-precison" class="section level5">
+<h5>Matching “Precison”</h5>
+<p>While many actual transshipments were not identified by encounters, we found that
+when an encounters was identified it often corresponded to an actual transshipment
+(mean: 0.6867656, median: 0.7, range: 0.3571 to 1). Thus encounters have limited recall,
+but are relatively precise. The limited number of actual encounters makes the
+comparison a bit tentative. <a href="Number%20of%20Encounter%20Events%20matched%20out%20of%20all%20Encounter%20Events">Here</a></p>
+<p>A similar analysis was done for loitering events, but is a bit more complicated as
+a single loitering event may match multiple transshipment events. Thus the number of matches
+may exceed the number of loitering events, though not all loitering events may have a match.</p>
+<p><br></p>
+</div>
+</div>
+<div id="analysis" class="section level3">
+<h3>Analysis</h3>
+<pre class="r"><code>library(bigrquery)
+library(tidyverse)
+library(sf)
+library(knitr)
+library(extrafont)
+library(DT)
+
+BQ_connection &lt;-  dbConnect(bigquery(), project = &quot;world-fishing-827&quot;, use_legacy_sql = FALSE)</code></pre>
+<p>Load the ICCAT observer data from 2017 - 2018</p>
+<pre class="r"><code>### Load in the ICCAT Observer data
+
+iccat_obs_data_2017_2018 &lt;- readr::read_csv(&#39;../../../../GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv&#39;)</code></pre>
+<pre class="r"><code># function that takes a lat or lon specified in degree minutes or degree, minutes, seconds
+# and converts to decimal degrees
+to_dec_degrees &lt;- function(location_string) {
+  split_loc &lt;- unlist(stringr::str_split(location_string, &quot;,&quot;))
+  if (length(split_loc) == 3) {
+    as.numeric(split_loc[1]) + as.numeric(split_loc[2]) / 60 + as.numeric(split_loc[3]) / 3600
+  } else if (length(split_loc) == 2) {
+    as.numeric(split_loc[1]) + as.numeric(split_loc[2]) / 60
+  } else {
+    as.numeric(location_string)
+  }
+}</code></pre>
+<p>Process and clean-up the ICCAT data</p>
+<pre class="r"><code>iccat_obs_data_processed_2017_2018 &lt;- iccat_obs_data_2017_2018 %&gt;%
+  # if date is NA we don&#39;t want the record
+  filter(!(is.na(date))) %&gt;%
+  # clean up the lat/lon degrees
+  mutate(
+    lat = stringr::str_replace(string = lat, pattern = &quot;°|º&quot;, replacement = &quot;,&quot;),
+    lon = stringr::str_replace(string = lon, pattern = &quot;°|º&quot;, replacement = &quot;,&quot;)
+  ) %&gt;%
+  rowwise() %&gt;%
+  # fix situations where year is 2 or 4 digits and then format date
+  mutate(
+    day = unlist(str_split(date, &quot;/&quot;))[1],
+    month = unlist(str_split(date, &quot;/&quot;))[2],
+    year = unlist(str_split(date, &quot;/&quot;))[3],
+    date = ifelse(nchar(year) &lt; 4,
+      paste0(day, &quot;/&quot;, month, &quot;/20&quot;, year),
+      paste0(day, &quot;/&quot;, month, &quot;/&quot;, year)
+    ),
+    date = as.Date(date, format = &quot;%d/%m/%Y&quot;),
+    # extract N,S,E,W and the lat/lon in degree minutes
+    lat_loc = stringr::str_sub(lat, stringr::str_length(lat), stringr::str_length(lat)),
+    lon_loc = stringr::str_sub(lon, stringr::str_length(lon), stringr::str_length(lon)),
+    lat = trimws(stringr::str_sub(lat, 1, stringr::str_length(lat) - 1)),
+    lon = trimws(stringr::str_sub(lon, 1, stringr::str_length(lon) - 1)),
+    # remove any trailing &quot;’&quot;
+    lat = gsub(&quot;(.*)[&#39;,’, ́]$&quot;, &quot;\\1&quot;, lat),
+    lon = gsub(&quot;(.*)[&#39;,’, ́]$&quot;, &quot;\\1&quot;, lon),
+    # replace any remaning &#39;’&#39; with comma
+    lat = stringr::str_replace(string = lat, pattern = &quot;’&quot;, replacement = &quot;,&quot;),
+    lon = stringr::str_replace(string = lon, pattern = &quot;’&quot;, replacement = &quot;,&quot;),
+    # replace any remaining spaces with &quot;,&quot;
+    lat = stringr::str_replace(string = lat, pattern = &quot; &quot;, replacement = &quot;,&quot;),
+    lon = stringr::str_replace(string = lon, pattern = &quot; &quot;, replacement = &quot;,&quot;),
+    # apply function to convert to decimal degrees
+    lat = to_dec_degrees(lat),
+    lon = to_dec_degrees(lon),
+    #   lat_degree = as.numeric(unlist(stringr::str_split(lat, &#39;,&#39;))[1]),
+    #   lat_minutes = as.numeric(unlist(stringr::str_split(lat, &#39;,&#39;))[2]),
+    #   lon_degree = as.numeric(unlist(stringr::str_split(lon, &#39;,&#39;))[1]),
+    #   lon_minutes = as.numeric(unlist(stringr::str_split(lon, &#39;,&#39;))[2]),
+    # convert to decimal degrees and specify appropriate sign
+    #   lat = lat_degree + lat_minutes/60,
+    #   lon = lon_degree + lon_minutes/60,
+    lat = ifelse(lat_loc == &quot;S&quot;, lat * -1, lat),
+    lon = ifelse(lon_loc == &quot;W&quot;, lon * -1, lon)
+  ) %&gt;%
+  mutate(
+    total_tonnage_obs_transshipped = ifelse(weight_units == &quot;kilograms&quot;,
+      total_tonnage_obs_transshipped / 1000,
+      total_tonnage_obs_transshipped
+    ),
+    bigeye_obs_transshipped = ifelse(weight_units == &quot;kilograms&quot;,
+      bigeye_obs_transshipped / 1000,
+      bigeye_obs_transshipped
+    ),
+    yellowfin_obs_transshiped = ifelse(weight_units == &quot;kilograms&quot;,
+      yellowfin_obs_transshiped / 1000,
+      yellowfin_obs_transshiped
+    ),
+    swordfish_obs_transshipped = ifelse(weight_units == &quot;kilograms&quot;,
+      swordfish_obs_transshipped / 1000,
+      swordfish_obs_transshipped
+    ),
+    SBF_obs_transshipped = ifelse(weight_units == &quot;kilograms&quot;,
+      SBF_obs_transshipped / 1000,
+      SBF_obs_transshipped
+    ),
+    other_obs_transshipped = ifelse(weight_units == &quot;kilograms&quot;,
+      other_obs_transshipped / 1000,
+      other_obs_transshipped
+    )
+  )</code></pre>
+<p>Filter for transshipment events that involved the transshipment of fish and add
+some vessel metadata.</p>
+<pre class="r"><code>iccat_obs_fish_2017_2018 &lt;- iccat_obs_data_processed_2017_2018 %&gt;%
+  filter(transshipped_fish == TRUE) %&gt;%
+  rowwise() %&gt;%
+  mutate(
+    hour = unlist(stringr::str_split(time, &quot;:&quot;))[1],
+    minutes = unlist(stringr::str_split(time, &quot;:&quot;))[2],
+    time_min = as.numeric(hour) * 60 + as.numeric(minutes)
+  ) %&gt;%
+  ungroup() %&gt;%
+  dplyr::select(-c(time, hour, minutes))
+
+
+iccat_voyage_limits &lt;- tibble(
+  vessel = c(
+    &quot;GENTA MARU&quot;, &quot;TAISEI MARU NO 24&quot;,
+    &quot;FUTAGAMI&quot;, &quot;IBUKI&quot;, &quot;MEITA MARU&quot;,
+    &quot;TAISEI MARU NO 15&quot;, &quot;CHIKUMA&quot;, &quot;GENTA MARU&quot;,
+    &quot;LADY TUNA&quot;, &quot;SHOTA MARU&quot;, &quot;TAISEI MARU NO 24&quot;,
+    &quot;MEITA MARU&quot;, &quot;VICTORIA 2&quot;, &quot;IBUKI&quot;,
+    &quot;TAISEI MARU NO 15&quot;, &quot;TAISEI MARU NO 24&quot;,
+    &quot;GENTA MARU&quot;, &quot;TAISEI MARU NO 15&quot;
+  ),
+  voyage_start = c(
+    &quot;2017-08-18&quot;, &quot;2017-10-05&quot;,
+    &quot;2017-10-28&quot;, &quot;2017-11-15&quot;, &quot;2017-11-14&quot;,
+    &quot;2017-12-01&quot;, &quot;2018-02-01&quot;, &quot;2018-01-14&quot;,
+    &quot;2018-02-22&quot;, &quot;2018-03-12&quot;, &quot;2018-03-30&quot;,
+    &quot;2018-04-18&quot;, &quot;2018-04-30&quot;, &quot;2018-05-27&quot;,
+    &quot;2018-06-12&quot;, &quot;2018-06-15&quot;,
+    &quot;2018-07-06&quot;, &quot;2018-08-10&quot;
+  ),
+  voyage_end = c(
+    &quot;2017-09-19&quot;, &quot;2017-12-14&quot;,
+    &quot;2017-12-20&quot;, &quot;2018-01-19&quot;, &quot;2017-12-20&quot;,
+    &quot;2018-02-10&quot;, &quot;2018-05-05&quot;, &quot;2018-03-25&quot;,
+    &quot;2018-05-26&quot;, &quot;2018-04-23&quot;, &quot;2018-06-11&quot;,
+    &quot;2018-06-09&quot;, &quot;2018-06-03&quot;, &quot;2018-07-24&quot;,
+    &quot;2018-08-09&quot;, &quot;2018-07-16&quot;,
+    &quot;2018-08-07&quot;, &quot;2018-09-03&quot;
+  ),
+  voyage = seq(1, 18)
+)
+
+iccat_obs_fish_2017_2018 &lt;- iccat_obs_fish_2017_2018 %&gt;%
+  left_join(iccat_voyage_limits, by = c(&quot;vessel&quot; = &quot;vessel&quot;, &quot;voyage&quot; = &quot;voyage&quot;)) %&gt;%
+  mutate(column_label = paste0(vessel, &quot; &quot;, voyage_start)) %&gt;%
+  dplyr::select(column_label, everything())</code></pre>
+</div>
+<div id="relationship-between-transshipment-duration-and-amount-of-fish-transshipped." class="section level3">
+<h3>Relationship between Transshipment Duration and Amount of Fish Transshipped.</h3>
+<p>Relatively linear, but should check out the small transshipment amount that took quite a while.</p>
+<pre class="r"><code>ggplot() +
+  geom_vline(
+    xintercept = c(120, 60 * 8),
+    linetype = &quot;dashed&quot;,
+    color = &quot;grey60&quot;
+  ) +
+  geom_point(
+    data = iccat_obs_fish_2017_2018,
+    aes(time_min, total_tonnage_obs_transshipped)
+  ) +
+  scale_x_continuous(&quot;Transshipment Duration (min)&quot;,
+    breaks = c(seq(0, 840, 120))
+  ) +
+  scale_y_continuous(&quot;Total Tonnage Transshipped, Observed (t)&quot;,
+    limits = c(0, 225)
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = &quot;grey85&quot;)
+  )</code></pre>
+<pre><code>## Warning: Removed 1 rows containing missing values (geom_point).</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-6-1.png" width="672" /></p>
+<div id="relationship-is-relatively-linear-adj.-r-at-0.864" class="section level4">
+<h4>Relationship is relatively linear adj. R at 0.864</h4>
+<pre class="r"><code>#all data
+broom::glance(lm(data = iccat_obs_fish_2017_2018, 
+                 total_tonnage_obs_transshipped~time_min ))</code></pre>
+<pre><code>## # A tibble: 1 x 11
+##   r.squared adj.r.squared sigma statistic   p.value    df logLik   AIC
+## *     &lt;dbl&gt;         &lt;dbl&gt; &lt;dbl&gt;     &lt;dbl&gt;     &lt;dbl&gt; &lt;int&gt;  &lt;dbl&gt; &lt;dbl&gt;
+## 1     0.864         0.864  12.1     3298. 4.99e-227     2 -2038. 4083.
+## # ... with 3 more variables: BIC &lt;dbl&gt;, deviance &lt;dbl&gt;, df.residual &lt;int&gt;</code></pre>
+<pre class="r"><code>median(iccat_obs_fish_2017_2018$time_min, na.rm = TRUE)</code></pre>
+<pre><code>## [1] 132.5</code></pre>
+</div>
+<div id="most-of-the-events-are-short-1.5---2.5-hours-median-132.5-minutes" class="section level4">
+<h4>Most of the events are short (1.5 - 2.5 hours, median 132.5 minutes)</h4>
+<pre class="r"><code>ggplot() +
+  geom_density(
+    data = iccat_obs_fish_2017_2018,
+    aes(time_min / 60), fill = &quot;grey95&quot;
+  ) +
+  scale_x_continuous(&quot;Transshipment Duration (h)&quot;,
+    breaks = c(seq(1, 14, 1))
+  ) +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-9-1.png" width="672" /></p>
+<pre class="r"><code>ggplot() +
+  geom_histogram(
+    data = iccat_obs_fish_2017_2018,
+    aes(time_min / 60),
+    binwidth = 0.25,
+    dotsize = 0.5,
+    color = &quot;grey65&quot;,
+    fill = &quot;grey70&quot;
+  ) +
+  scale_x_continuous(&quot;Transshipment Duration (h)&quot;,
+    breaks = c(seq(1, 14, 1))
+  ) +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())</code></pre>
+<pre><code>## Warning: Ignoring unknown parameters: dotsize</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-9-2.png" width="672" /></p>
+</div>
+</div>
+<div id="locations-of-the-events-within-the-iccat" class="section level3">
+<h3>Locations of the Events within the ICCAT</h3>
+<pre class="r"><code># required libraries
+library(leaflet)
+# start basemap
+map &lt;- leaflet() %&gt;%
+
+  # add ocean basemap
+  addProviderTiles(providers$CartoDB.DarkMatter) %&gt;%
+
+  # add another layer with place names
+  addProviderTiles(providers$Hydda.RoadsAndLabels, group = &quot;Place names&quot;) %&gt;%
+
+  # focus map in a certain area / zoom level
+  setView(lng = -10, lat = -10, zoom = 3) %&gt;%
+
+  # add layers control
+  # addLayersControl(overlayGroups = c(&#39;Place names&#39;),
+  #                     options = layersControlOptions(collapsed = FALSE),
+  #                     position = &#39;topright&#39;) %&gt;%
+  #
+  # #     # list groups to hide on startup
+  hideGroup(c(&quot;Place names&quot;))
+
+map %&gt;%
+  # mapview::addFeatures(eez_shp,
+  #                     weight = 1, fillColor = NA, color = &quot;grey35&quot;,
+  #                    opacity = 0.2, fillOpacity = 0.3) %&gt;%
+  addCircleMarkers(
+    data = iccat_obs_fish_2017_2018, ~lon, ~lat,
+    weight = 0.5,
+    color = &quot;black&quot;,
+    # fillColor = &#39;darkslategrey&#39;,
+    fillColor = &quot;yellowgreen&quot;,
+    radius = 4,
+    fillOpacity = 0.9,
+    stroke = T,
+    label = ~ paste0(
+      &quot;Point: &quot;,
+      as.character(date), &quot;, &quot;,
+      as.character(vessel)
+    ),
+    group = &quot;Points&quot;
+  )</code></pre>
+<div id="htmlwidget-1" style="width:672px;height:480px;" class="leaflet html-widget"></div>
+<script type="application/json" data-for="htmlwidget-1">{"x":{"options":{"crs":{"crsClass":"L.CRS.EPSG3857","code":null,"proj4def":null,"projectedBounds":null,"options":{}}},"calls":[{"method":"addProviderTiles","args":["CartoDB.DarkMatter",null,null,{"errorTileUrl":"","noWrap":false,"detectRetina":false}]},{"method":"addProviderTiles","args":["Hydda.RoadsAndLabels",null,"Place names",{"errorTileUrl":"","noWrap":false,"detectRetina":false}]},{"method":"hideGroup","args":["Place names"]},{"method":"addCircleMarkers","args":[[-27.1666666666667,-24.5166666666667,-20.8666666666667,-17.5,-17.3166666666667,-17.4636833333333,-16.97635,-19.4825333333333,-20.2079666666667,-1.33765,-1.34075,2.02781666666667,2.0756,2.11816666666667,1.96451666666667,1.98211666666667,-32.4509333333333,-17.5666666666667,-15.4333333333333,-15.2666666666667,-14.9,0.666666666666667,-0.883333333333333,-0.8,0.316666666666667,0.483333333333333,0.683333333333333,1.26666666666667,0.75,1.43333333333333,-2.5,-2,-3.68333333333333,-3.6,-3.66666666666667,-3.48333333333333,-3.78333333333333,-1.95,-1.91666666666667,-1.98333333333333,-1.93333333333333,-5.66666666666667,-5.71666666666667,-5,-5.78333333333333,20.3333333333333,5,-1.75,-1.48333333333333,-1.15,-2.78333333333333,-2.75,-7.48333333333333,-7.01666666666667,-7.65,-7.56666666666667,-6.78333333333333,-1.88333333333333,-1.53333333333333,-1.55,-1.51666666666667,-1.5,-3.66666666666667,-6.76666666666667,-6.71666666666667,-3.48333333333333,-3.45,-4.8,-4.91666666666667,-5.43333333333333,-7.06666666666667,-12.8,-16.0333333333333,-18.4833333333333,-29.9263333333333,-29.8601666666667,-1.93216666666667,-6.11863333333333,-2.99565,-5.08188333333333,-3.08543333333333,-3.80261666666667,-3.65495,-4.39433333333333,-4.09455,-3.97856666666667,-3.29308333333333,-5.27261666666667,-5.19313333333333,-2.87988333333333,-2.73261666666667,-1.98838333333333,-1.91945,-2.04323333333333,-2.01071666666667,-1.97965,13.7927666666667,13.7843,12.0184,11.9866,9.39965,9.39225,9.3575,9.17686666666667,9.13581666666667,8.8797,8.92951666666667,8.66975,8.50596666666667,5.78626666666667,-1.96856666666667,-1.9052,-4.57238333333333,-4.68713333333333,7.95666666666667,-5.65556666666667,-2.98066666666667,-6.42733333333333,-4.15588333333333,-4.13365,-2.49525,-3.21045,-3.9646,-7.17461666666667,-5.48078333333333,-9.17638333333333,-4.32515,-1.61371666666667,13.00185,12.9684666666667,13.76315,13.7735333333333,-2.9842,-2.8837,-2.7467,-4.51901666666667,-6.98,-22.2866833333333,-4.14668333333333,-3.72311666666667,-5.58961666666667,-5.52875,-7.23825,-7.19223333333333,12.6867833333333,9.91668333333333,9.83433333333333,9.30226666666667,7.77956666666667,7.57095,5.89751666666667,5.8906,5.85498333333333,5.8191,7.88413333333333,7.86068333333333,7.84715,-2.17175,-5.16153333333333,-5.92103333333333,-7.48163333333333,-7.34571666666667,-7.29841666666667,-6.93541666666667,-6.33658333333333,-4.9324,-5.08551666666667,-5.07361666666667,-3.04823333333333,-9.43123333333333,-10.0034666666667,-9.85185,-8.01088333333333,-9.46155,-11.3501833333333,-11.1481,-9.46718333333333,-11.4576166666667,-12.0711666666667,-12.0197333333333,8.21666666666667,12.7166666666667,13.5833333333333,13.5166666666667,9.66666666666667,9.68333333333333,5.35,5.5,5.5,5.16666666666667,6.81666666666667,6.76666666666667,5.61666666666667,10.2,10.7,10.6333333333333,10.5333333333333,10.4333333333333,10.1666666666667,10.05,11,8.4,8.3,6.81666666666667,6.7,4.85,6.83333333333333,6.75,7.98333333333333,11.0166666666667,10.8333333333333,9.08333333333333,9.18333333333333,8.33333333333333,7.16666666666667,10.1666666666667,3.98333333333333,2.35,-7.1,-7.8,-7.8,-7.08333333333333,-7.5,-2.88333333333333,-10.93005,-11.4780166666667,-8.31163333333333,-7.73525,-9.40193333333333,-8.9899,-5.33871666666667,4.64998333333333,-6.32198333333333,6.69198333333333,8.3154,8.33161666666667,7.95545,7.90576666666667,8.55195,8.56935,8.60403333333333,9.01455,8.9871,9.5019,9.3264,9.64553333333333,9.96801666666667,9.98031666666667,5.57688333333333,6.00473333333333,4.98423333333333,5.18836666666667,4.506,-10.2391666666667,-9.65531666666667,-11.23655,-7.00291666666667,-10.91155,-9.259,-10.6672166666667,-11.1092333333333,-10.1728,9.31925,8.23715,6.65883333333333,5.01825,5.9468,5.737,5.76935,6.80621666666667,9.01465,8.70391666666667,7.98285,7.98553333333333,10.1358333333333,9.15895,9.06186666666667,7.40998333333333,6.96593333333333,6.5736,6.52463333333333,6.47966666666667,8.19326666666667,10.99845,9.8031,9.47675,9.3948,7.83481666666667,7.74255,7.50493333333333,8.58718333333333,9.00236666666667,11.1336,11.08485,16.0795666666667,16.0286666666667,15.0510833333333,14.98775,6.98766666666667,6.74841666666667,6.99743333333333,-11.5048333333333,-11.4933333333333,-11.642,-11.5958333333333,-12.441,-3.64,-3.57366666666667,-0.9875,6.97766666666667,10.0883333333333,6.9265,6.8255,7.065,5.94133333333333,5.81083333333333,5.764,5.164,5.14366666666667,5.86683333333333,5.74116666666667,4.67316666666667,8.818,7.9935,-34.0081166666667,-34.0671833333333,-31.4407833333333,-18.6655,-11.5062,-11.4127,-11.3362833333333,-11.89865,-11.00815,-8.5036,-7.48958333333333,-2.8922,0.22855,-5.50188333333333,-5.99731666666667,-1.98695,-2.34435,1.48248333333333,2.08336666666667,2.09141666666667,5.8862,9.99251666666667,9.80973333333333,9.85618333333333,10.0827666666667,10.0410666666667,9.8532,5.02026666666667,5.04553333333333,5.04293333333333,4.84846666666667,5.51038333333333,10.9701333333333,-8.20593333333333,-7.86998333333333,-7.81933333333333,-8.65261666666667,-9.55726666666667,-10.0732166666667,-10.0381,-11.3347833333333,-2.3357,-3.59011666666667,1.34208333333333,1.80733333333333,0.38435,-19.0044833333333,-18.8636,-20.6294833333333,-38.0051333333333,-37.8278,-25.3456833333333,-24.1757333333333,-11.93715,-6.31405,-5.9939,-3.00116666666667,6.99228333333333,6.9353,-2.19773333333333,-1.96506666666667,-1.9284,-1.91258333333333,-2.15851666666667,-1.97693333333333,-1.89933333333333,-1.85181666666667,-3.38201666666667,-3.50395,7.29198333333333,6.83308333333333,4.08393333333333,-7.03325,-17.8737,-19.2131333333333,8.85928333333333,8.86048333333333,9.49425,8.83145,13.672,13.61435,13.0108833333333,-25.3236333333333,-18.4513666666667,-9.07506666666667,-1.13286666666667,-2.07606666666667,-1.95296666666667,-5.82783333333333,-4.47126666666667,-5.97406666666667,-5.8978,-5.36973333333333,-7.62515,-7.27236666666667,-7.2231,-6.01245,-4.78115,-4.71076666666667,-4.82431666666667,-9.762,-10.8452,-10.1323666666667,-10.1135666666667,-10.70785,-10.6725333333333,-12.4309333333333,-12.32765,-11.0715166666667,-10.9804166666667,-6.197,-6.0674,-5.32151666666667,-5.30233333333333,-8.61253333333333,-8.58068333333333,2.51413333333333,2.56403333333333,4.34158333333333,-6.1212,-6.11276666666667,-6.10316666666667,0.837733333333333,-2.45613333333333,-2.44055,-2.41501666666667,-1.96131666666667,-5.11318333333333,-24.95125,-24.9961666666667,-25.0416666666667,-24.9048333333333,-21.721,-18.866,-3.407,-3.11966666666667,0.310666666666667,0.330833333333333,-2.70026666666667,-2.77655,-2.68678333333333,1.04383333333333,0.6425,-2.74683333333333,-5.66566666666667,-7.59006666666667,-7.55391666666667,-6.37998333333333,-6.28118333333333,-6.22643333333333,-6.01301666666667,-5.96455,-6.2551,-6.18558333333333,12.7838,2.8488,2.98326666666667,2.99806666666667,1.1247,-1.40355,-1.38836666666667,-19.48,-20.4100666666667,-19.4821166666667,-23.9957666666667,-23.53425,-23.0184833333333,-25.5069333333333,-25.499,-25.9890666666667,-25.9729,-25.9452833333333,-25.02195,-23.9935333333333,-27.0185666666667,-24.9223333333333,-24.9784166666667,-24.9209833333333,-25.4985166666667,-26.0255666666667,-25.6322333333333,-33.8666666666667,-33.8166666666667,-24.85,-18.25,-19.2333333333333,-12.9833333333333,-26,-28.9166666666667,-30.15,-30.1166666666667,-26.6833333333333,-26.35,-23,-21.9833333333333,-22,-30.2926166666667,-30.1654],[10.45,7.06666666666667,4.48333333333333,3.36666666666667,5.91666666666667,6.6989,2.9906,-0.0179833333333333,-0.46175,-10.8306833333333,-10.8325,-19.9878,-19.986,-19.9867166666667,-20.0412833333333,-20.0628666666667,7.53923333333333,1.91666666666667,5.98333333333333,5.88333333333333,2.03333333333333,-1.01666666666667,0.516666666666667,0.533333333333333,-1.15,-1.13333333333333,-1.85,-3.68333333333333,-3.01666666666667,-4.81666666666667,-14.1833333333333,-17,-17.0166666666667,-17.1333333333333,-17.05,-17.15,-16.85,-21.1333333333333,-21.1666666666667,-21.15,-21.2,-19.85,-19.7166666666667,-20.0166666666667,-23.2833333333333,-20.65,-19.9833333333333,-20.75,-21.4833333333333,-22.8666666666667,-24.5333333333333,-24.6166666666667,-22.0666666666667,-20.8,-19.85,-19.95,-18.8333333333333,-13.0666666666667,-11,-11.0166666666667,-11.05,-9.5,-9.63333333333333,-6.78333333333333,-6.81666666666667,0.983333333333333,0.966666666666667,2.98333333333333,2.98333333333333,4.4,5.75,7.9,6.8,8.08333333333333,6.93883333333333,6.92216666666667,-19.0556666666667,-20.8186666666667,-2.52043333333333,-3.71428333333333,1.64701666666667,2.0664,2.04065,0.846833333333333,-2.20803333333333,-2.20316666666667,-4.05506666666667,-11.5553833333333,-11.6052666666667,-15.15035,-15.2994666666667,-16.9636333333333,-17.09175,-17.9186166666667,-18.0155666666667,-18.1009,-39.5869833333333,-39.6314,-41.6682333333333,-41.7641,-40.5165,-40.56925,-40.75755,-37.4700333333333,-37.6257666666667,-35.6172666666667,-34.8821666666667,-32.1880666666667,-28.0670166666667,-29.4276166666667,-26.0329833333333,-26.1487166666667,-26.9948166666667,-26.9168666666667,-25.0516,-23.2106166666667,-22.0411666666667,-21.8240833333333,-20.02455,-20.0417333333333,-13.0142333333333,-12.8984666666667,-10.505,-8.3512,-8.46195,-4.75988333333333,-3.50436666666667,-16.9378333333333,-35.0103333333333,-35.1301166666667,-40.9779833333333,-41.0843833333333,-7.66725,-7.60055,-4.19548333333333,-1.9645,3.14325,10.1320333333333,-2.34378333333333,-4.24543333333333,-18.7497833333333,-18.8166666666667,-20.2581,-20.3625333333333,-27.7944666666667,-26.7048833333333,-22.4162,-20.4185666666667,-21.7101333333333,-21.6946833333333,-26.4076833333333,-26.4196833333333,-26.44335,-26.4679833333333,-29.2361166666667,-29.2292666666667,-29.2471833333333,-23.26795,-23.0075833333333,-23.0196166666667,-21.4912333333333,-21.56575,-21.6150666666667,-21.4977,-21.955,-19.4976666666667,-18.4683666666667,-18.4939833333333,-16.8164166666667,-10.6493333333333,-9.84616666666667,-9.68166666666667,-2.70041666666667,-2.98945,-1.26353333333333,-1.18416666666667,-0.102483333333333,-0.036,1.03475,0.995566666666667,-28.3166666666667,-30.7,-30.0333333333333,-30.1,-32.3333333333333,-31.9833333333333,-29.6666666666667,-36.3833333333333,-36.3833333333333,-36.1666666666667,-37.75,-37.75,-38.7,-41.6833333333333,-43.1,-43.2166666666667,-43.1333333333333,-43.3666666666667,-40.8833333333333,-40.8833333333333,-40.2833333333333,-38.45,-38.55,-39.4166666666667,-39.5666666666667,-41.0166666666667,-41.6333333333333,-41.7333333333333,-41.65,-32.9833333333333,-33.1666666666667,-43.8333333333333,-42.4833333333333,-35.5166666666667,-32.3166666666667,-28.1833333333333,-20.4833333333333,-18.5166666666667,-19.6833333333333,-21.5833333333333,-21.65,-21.0833333333333,-19.3,-5.85,2.98908333333333,1.0007,-3.15941666666667,-3.6686,-6.00416666666667,-10.15045,-18.9993166666667,-24.21955,-25.2421,-32.0329,-31.1817333333333,-29.88775,-29.6151333333333,-29.75115,-31.5131,-31.78585,-31.6517833333333,-31.7767666666667,-31.8136833333333,-32.0266,-32.5579,-33.0276833333333,-33.1879666666667,-30.5428333333333,-21.1596833333333,-20.8091833333333,-20.03065,-19.74765,-18.6533666666667,-6.08728333333333,-0.5172,-5.64675,-3.51216666666667,-6.49303333333333,-10.8345833333333,-10.9933666666667,-12.2488,-11.51745,-26.3290166666667,-26.3707833333333,-25.58935,-23.9159666666667,-22.09325,-26.1829833333333,-26.216,-27.0044666666667,-29.1599333333333,-27.8172,-29.0034666666667,-28.8451333333333,-32.554,-36.9272,-37.0516833333333,-32.50525,-37.5169333333333,-40.0081166666667,-40.05725,-40.1177666666667,-40.8175166666667,-40.0283666666667,-38.7066166666667,-39.4888666666667,-39.5482333333333,-38.003,-38.0685,-35.6172666666667,-34.2639,-33.0033833333333,-29.6794666666667,-29.7486,-28.7625333333333,-28.8345,-28.28295,-28.404,-34.00395,-32.9955,-34.5057,8.00016666666667,8.00316666666667,8.00566666666667,7.9975,-0.0726666666666667,-14.3141666666667,-14.4738333333333,-15.086,-26.0263333333333,-27.099,-32.0763333333333,-32.18,-32.0898333333333,-29.7611666666667,-32.0126666666667,-32.0703333333333,-31.3533333333333,-31.3868333333333,-31.844,-31.9186666666667,-31.6001666666667,-30.2856666666667,-33.5026666666667,7.86703333333333,7.84245,7.49081666666667,6.0064,6.01413333333333,6.0131,6.00551666666667,6.57861666666667,5.46833333333333,6.99273333333333,6.0154,0.492916666666667,-0.533916666666667,-21.8894666666667,-22.01485,-25.4958,-24.5756833333333,-25.01725,-24.1465666666667,-24.19395,-22.9530833333333,-21.9987666666667,-21.9996166666667,-22.14315,-22.9549333333333,-22.9599166666667,-25.0497166666667,-34.01925,-34.0846333333333,-34.0927,-34.0799,-34.0168333333333,-25.0454666666667,-20.5027666666667,-20.19155,-20.2422666666667,-18.8483166666667,-20.0142333333333,-20.4329,-20.5200833333333,-17.8405,-3.07841666666667,0.318016666666667,-0.249866666666667,1.79876666666667,1.39928333333333,8.11105,8.22603333333333,8.2344,3.94785,4.13021666666667,10.1217666666667,9.50215,-10.0035666666667,-18.6946333333333,-21.5168166666667,-21.7067833333333,-22.0123833333333,-22.0161666666667,-21.8750166666667,-22.1943666666667,-22.2575333333333,-22.2914833333333,-21.0245833333333,-20.0167333333333,-20.1553,-20.25105,-21.8944333333333,-22.0486333333333,-28.83905,-28.8689166666667,-27.00105,-20.1326833333333,7.26396666666667,7.83571666666667,-49.9823833333333,-50.1066666666667,-42.5053,-41.68305,-28.0853666666667,-28.1242,-28.0074166666667,10.1870833333333,2.51381666666667,-4.2313,-11.1910833333333,-13.47925,-13.7532666666667,-11.0926666666667,-9.57951666666667,-9.94343333333333,-10.0065,-11.4110166666667,-10.3969166666667,-9.74495,-9.85096666666667,-7.86361666666667,-11.54385,-11.70235,-11.46875,-3.03683333333333,-2.93711666666667,-1.05308333333333,-1.1045,-0.02585,-0.0570333333333333,-1.01138333333333,-1.06465,-2.0629,-2.1673,-6.42758333333333,-6.55355,-18.8528166666667,-18.9435,-18.8146666666667,-18.9215166666667,-13.02705,-13.0647666666667,-16.4589833333333,-10.0937833333333,-10.1113666666667,-10.13355,-4.03346666666667,1.46751666666667,1.46141666666667,1.45293333333333,-11.3449333333333,-8.78133333333333,9.3122,8.5005,10.5181666666667,10.647,8.33666666666667,7.98866666666667,0.744166666666667,1.2665,0.837333333333333,0.820333333333333,-1.99078333333333,-3.52531666666667,-3.58925,-2.01783333333333,-2.05183333333333,-5.94588333333333,-11.3352833333333,-10.1311666666667,-10.2330166666667,-18.78595,-18.9921,-19.1338,-20.3456833333333,-20.4866833333333,-21.4164833333333,-21.61515,-28.73035,-17.1042,-17.8362833333333,-15.9309833333333,-13.4677666666667,-3.1814,-3.22168333333333,7.01683333333333,7.17863333333333,7.95851666666667,2.00666666666667,1.63503333333333,5.75641666666667,3.96713333333333,4.13648333333333,4.98685,5.92875,5.94468333333333,9.97575,8.51795,11.0566166666667,9.02065,7.9874,7.93096666666667,6.88581666666667,6.4805,7.00678333333333,13.4333333333333,13.45,9.93333333333333,7.85,7.85,3.68333333333333,8.98333333333333,10.5333333333333,11.6166666666667,11.65,4.85,4.46666666666667,0.5,0.983333333333333,3,5.84185,5.87048333333333],4,null,"Points",{"interactive":true,"className":"","stroke":true,"color":"black","weight":0.5,"opacity":0.5,"fill":true,"fillColor":"yellowgreen","fillOpacity":0.9},null,null,null,null,["Point: 2017-08-20, GENTA MARU","Point: 2017-08-21, GENTA MARU","Point: 2017-08-22, GENTA MARU","Point: 2017-08-23, GENTA MARU","Point: 2017-08-24, GENTA MARU","Point: 2017-08-25, GENTA MARU","Point: 2017-08-26, GENTA MARU","Point: 2017-08-27, GENTA MARU","Point: 2017-08-28, GENTA MARU","Point: 2017-09-03, GENTA MARU","Point: 2017-09-03, GENTA MARU","Point: 2017-09-05, GENTA MARU","Point: 2017-09-05, GENTA MARU","Point: 2017-09-05, GENTA MARU","Point: 2017-09-06, GENTA MARU","Point: 2017-09-06, GENTA MARU","Point: 2017-09-16, GENTA MARU","Point: 2017-10-10, TAISEI MARU NO 24","Point: 2017-10-12, TAISEI MARU NO 24","Point: 2017-10-12, TAISEI MARU NO 24","Point: 2017-10-13, TAISEI MARU NO 24","Point: 2017-10-17, TAISEI MARU NO 24","Point: 2017-10-18, TAISEI MARU NO 24","Point: 2017-10-18, TAISEI MARU NO 24","Point: 2017-10-19, TAISEI MARU NO 24","Point: 2017-10-19, TAISEI MARU NO 24","Point: 2017-10-20, TAISEI MARU NO 24","Point: 2017-10-21, TAISEI MARU NO 24","Point: 2017-10-21, TAISEI MARU NO 24","Point: 2017-10-22, TAISEI MARU NO 24","Point: 2017-10-24, TAISEI MARU NO 24","Point: 2017-10-25, TAISEI MARU NO 24","Point: 2017-10-26, TAISEI MARU NO 24","Point: 2017-10-26, TAISEI MARU NO 24","Point: 2017-10-27, TAISEI MARU NO 24","Point: 2017-10-27, TAISEI MARU NO 24","Point: 2017-10-28, TAISEI MARU NO 24","Point: 2017-10-29, TAISEI MARU NO 24","Point: 2017-10-29, TAISEI MARU NO 24","Point: 2017-10-30, TAISEI MARU NO 24","Point: 2017-10-30, TAISEI MARU NO 24","Point: 2017-10-31, TAISEI MARU NO 24","Point: 2017-11-01, TAISEI MARU NO 24","Point: 2017-11-02, TAISEI MARU NO 24","Point: 2017-11-03, TAISEI MARU NO 24","Point: 2017-11-13, TAISEI MARU NO 24","Point: 2017-11-16, TAISEI MARU NO 24","Point: 2017-11-18, TAISEI MARU NO 24","Point: 2017-11-19, TAISEI MARU NO 24","Point: 2017-11-20, TAISEI MARU NO 24","Point: 2017-11-21, TAISEI MARU NO 24","Point: 2017-11-21, TAISEI MARU NO 24","Point: 2017-11-22, TAISEI MARU NO 24","Point: 2017-11-23, TAISEI MARU NO 24","Point: 2017-11-24, TAISEI MARU NO 24","Point: 2017-11-24, TAISEI MARU NO 24","Point: 2017-11-25, TAISEI MARU NO 24","Point: 2017-11-27, TAISEI MARU NO 24","Point: 2017-11-28, TAISEI MARU NO 24","Point: 2017-11-28, TAISEI MARU NO 24","Point: 2017-11-28, TAISEI MARU NO 24","Point: 2017-11-29, TAISEI MARU NO 24","Point: 2017-11-30, TAISEI MARU NO 24","Point: 2017-12-01, TAISEI MARU NO 24","Point: 2017-12-01, TAISEI MARU NO 24","Point: 2017-12-03, TAISEI MARU NO 24","Point: 2017-12-03, TAISEI MARU NO 24","Point: 2017-12-04, TAISEI MARU NO 24","Point: 2017-12-04, TAISEI MARU NO 24","Point: 2017-12-05, TAISEI MARU NO 24","Point: 2017-12-06, TAISEI MARU NO 24","Point: 2017-12-07, TAISEI MARU NO 24","Point: 2017-12-08, TAISEI MARU NO 24","Point: 2017-12-09, TAISEI MARU NO 24","Point: 2017-10-31, FUTAGAMI","Point: 2017-10-31, FUTAGAMI","Point: 2017-11-09, FUTAGAMI","Point: 2017-11-30, FUTAGAMI","Point: 2017-11-23, IBUKI","Point: 2017-11-24, IBUKI","Point: 2017-11-26, IBUKI","Point: 2017-11-27, IBUKI","Point: 2017-11-27, IBUKI","Point: 2017-11-28, IBUKI","Point: 2017-11-29, IBUKI","Point: 2017-11-29, IBUKI","Point: 2017-11-30, IBUKI","Point: 2017-12-02, IBUKI","Point: 2017-12-02, IBUKI","Point: 2017-12-04, IBUKI","Point: 2017-12-04, IBUKI","Point: 2017-12-05, IBUKI","Point: 2017-12-05, IBUKI","Point: 2017-12-06, IBUKI","Point: 2017-12-06, IBUKI","Point: 2017-12-06, IBUKI","Point: 2017-12-21, IBUKI","Point: 2017-12-21, IBUKI","Point: 2017-12-22, IBUKI","Point: 2017-12-22, IBUKI","Point: 2017-12-23, IBUKI","Point: 2017-12-23, IBUKI","Point: 2017-12-23, IBUKI","Point: 2017-12-25, IBUKI","Point: 2017-12-25, IBUKI","Point: 2017-12-26, IBUKI","Point: 2017-12-27, IBUKI","Point: 2017-12-28, IBUKI","Point: 2017-12-29, IBUKI","Point: 2017-12-30, IBUKI","Point: 2018-01-01, IBUKI","Point: 2018-01-01, IBUKI","Point: 2018-01-02, IBUKI","Point: 2018-01-03, IBUKI","Point: 2018-01-04, IBUKI","Point: 2018-01-05, IBUKI","Point: 2018-01-06, IBUKI","Point: 2018-01-07, IBUKI","Point: 2018-01-08, IBUKI","Point: 2018-01-08, IBUKI","Point: 2018-01-10, IBUKI","Point: 2018-01-10, IBUKI","Point: 2018-01-11, IBUKI","Point: 2018-01-12, IBUKI","Point: 2018-01-12, IBUKI","Point: 2018-01-14, IBUKI","Point: 2017-11-21, MEITA MARU","Point: 2017-11-24, MEITA MARU","Point: 2017-11-29, MEITA MARU","Point: 2017-11-29, MEITA MARU","Point: 2017-12-01, MEITA MARU","Point: 2017-12-01, MEITA MARU","Point: 2017-12-09, MEITA MARU","Point: 2017-12-10, MEITA MARU","Point: 2017-12-11, MEITA MARU","Point: 2017-12-12, MEITA MARU","Point: 2017-12-13, MEITA MARU","Point: 2017-12-16, MEITA MARU","Point: 2017-12-13, TAISEI MARU NO 15","Point: 2017-12-14, TAISEI MARU NO 15","Point: 2017-12-19, TAISEI MARU NO 15","Point: 2017-12-19, TAISEI MARU NO 15","Point: 2017-12-20, TAISEI MARU NO 15","Point: 2017-12-20, TAISEI MARU NO 15","Point: 2017-12-29, TAISEI MARU NO 15","Point: 2018-01-11, TAISEI MARU NO 15","Point: 2018-01-12, TAISEI MARU NO 15","Point: 2018-01-13, TAISEI MARU NO 15","Point: 2018-01-14, TAISEI MARU NO 15","Point: 2018-01-14, TAISEI MARU NO 15","Point: 2018-01-15, TAISEI MARU NO 15","Point: 2018-01-15, TAISEI MARU NO 15","Point: 2018-01-15, TAISEI MARU NO 15","Point: 2018-01-15, TAISEI MARU NO 15","Point: 2018-01-16, TAISEI MARU NO 15","Point: 2018-01-16, TAISEI MARU NO 15","Point: 2018-01-16, TAISEI MARU NO 15","Point: 2018-01-18, TAISEI MARU NO 15","Point: 2018-01-19, TAISEI MARU NO 15","Point: 2018-01-19, TAISEI MARU NO 15","Point: 2018-01-20, TAISEI MARU NO 15","Point: 2018-01-20, TAISEI MARU NO 15","Point: 2018-01-20, TAISEI MARU NO 15","Point: 2018-01-21, TAISEI MARU NO 15","Point: 2018-01-21, TAISEI MARU NO 15","Point: 2018-01-22, TAISEI MARU NO 15","Point: 2018-01-22, TAISEI MARU NO 15","Point: 2018-01-22, TAISEI MARU NO 15","Point: 2018-01-23, TAISEI MARU NO 15","Point: 2018-01-25, TAISEI MARU NO 15","Point: 2018-01-25, TAISEI MARU NO 15","Point: 2018-01-25, TAISEI MARU NO 15","Point: 2018-01-27, TAISEI MARU NO 15","Point: 2018-01-27, TAISEI MARU NO 15","Point: 2018-01-28, TAISEI MARU NO 15","Point: 2018-01-28, TAISEI MARU NO 15","Point: 2018-01-30, TAISEI MARU NO 15","Point: 2018-01-31, TAISEI MARU NO 15","Point: 2018-02-01, TAISEI MARU NO 15","Point: 2018-02-01, TAISEI MARU NO 15","Point: 2018-02-14, CHIKUMA","Point: 2018-02-15, CHIKUMA","Point: 2018-02-20, CHIKUMA","Point: 2018-02-20, CHIKUMA","Point: 2018-02-21, CHIKUMA","Point: 2018-02-22, CHIKUMA","Point: 2018-02-23, CHIKUMA","Point: 2018-02-24, CHIKUMA","Point: 2018-02-25, CHIKUMA","Point: 2018-02-25, CHIKUMA","Point: 2018-02-26, CHIKUMA","Point: 2018-02-26, CHIKUMA","Point: 2018-02-27, CHIKUMA","Point: 2018-02-28, CHIKUMA","Point: 2018-03-01, CHIKUMA","Point: 2018-02-01, CHIKUMA","Point: 2018-03-02, CHIKUMA","Point: 2018-03-02, CHIKUMA","Point: 2018-03-03, CHIKUMA","Point: 2018-03-04, CHIKUMA","Point: 2018-03-04, CHIKUMA","Point: 2018-03-05, CHIKUMA","Point: 2018-03-05, CHIKUMA","Point: 2018-03-06, CHIKUMA","Point: 2018-03-06, CHIKUMA","Point: 2018-03-07, CHIKUMA","Point: 2018-03-08, CHIKUMA","Point: 2018-03-08, CHIKUMA","Point: 2018-03-09, CHIKUMA","Point: 2018-03-12, CHIKUMA","Point: 2018-03-12, CHIKUMA","Point: 2018-03-21, CHIKUMA","Point: 2018-03-22, CHIKUMA","Point: 2018-03-24, CHIKUMA","Point: 2018-03-26, CHIKUMA","Point: 2018-03-27, CHIKUMA","Point: 2018-03-29, CHIKUMA","Point: 2018-03-30, CHIKUMA","Point: 2018-04-01, CHIKUMA","Point: 2018-04-02, CHIKUMA","Point: 2018-04-02, CHIKUMA","Point: 2018-04-04, CHIKUMA","Point: 2018-04-05, CHIKUMA","Point: 2018-04-08, CHIKUMA","Point: 2018-01-20, GENTA MARU","Point: 2018-01-23, GENTA MARU","Point: 2018-01-26, GENTA MARU","Point: 2018-01-27, GENTA MARU","Point: 2018-01-28, GENTA MARU","Point: 2018-01-29, GENTA MARU","Point: 2018-01-31, GENTA MARU","Point: 2018-02-03, GENTA MARU","Point: 2018-02-04, GENTA MARU","Point: 2018-02-06, GENTA MARU","Point: 2018-02-07, GENTA MARU","Point: 2018-02-08, GENTA MARU","Point: 2018-02-09, GENTA MARU","Point: 2018-02-09, GENTA MARU","Point: 2018-02-10, GENTA MARU","Point: 2018-02-10, GENTA MARU","Point: 2018-02-11, GENTA MARU","Point: 2018-02-12, GENTA MARU","Point: 2018-02-12, GENTA MARU","Point: 2018-02-13, GENTA MARU","Point: 2018-02-14, GENTA MARU","Point: 2018-02-15, GENTA MARU","Point: 2018-02-16, GENTA MARU","Point: 2018-02-18, GENTA MARU","Point: 2018-02-24, GENTA MARU","Point: 2018-02-25, GENTA MARU","Point: 2018-02-26, GENTA MARU","Point: 2018-02-28, GENTA MARU","Point: 2018-03-01, GENTA MARU","Point: 2018-03-05, GENTA MARU","Point: 2018-03-02, LADY TUNA","Point: 2018-03-03, LADY TUNA","Point: 2018-03-04, LADY TUNA","Point: 2018-03-05, LADY TUNA","Point: 2018-03-06, LADY TUNA","Point: 2018-03-07, LADY TUNA","Point: 2018-03-08, LADY TUNA","Point: 2018-03-09, LADY TUNA","Point: 2018-03-14, LADY TUNA","Point: 2018-03-14, LADY TUNA","Point: 2018-03-15, LADY TUNA","Point: 2018-03-16, LADY TUNA","Point: 2018-03-17, LADY TUNA","Point: 2018-03-19, LADY TUNA","Point: 2018-03-19, LADY TUNA","Point: 2018-03-20, LADY TUNA","Point: 2018-03-21, LADY TUNA","Point: 2018-03-22, LADY TUNA","Point: 2018-03-23, LADY TUNA","Point: 2018-03-24, LADY TUNA","Point: 2018-03-25, LADY TUNA","Point: 2018-03-28, LADY TUNA","Point: 2018-03-28, LADY TUNA","Point: 2018-03-30, LADY TUNA","Point: 2018-04-01, LADY TUNA","Point: 2018-04-02, LADY TUNA","Point: 2018-04-02, LADY TUNA","Point: 2018-04-02, LADY TUNA","Point: 2018-04-03, LADY TUNA","Point: 2018-04-04, LADY TUNA","Point: 2018-04-05, LADY TUNA","Point: 2018-04-06, LADY TUNA","Point: 2018-04-06, LADY TUNA","Point: 2018-04-07, LADY TUNA","Point: 2018-04-07, LADY TUNA","Point: 2018-04-08, LADY TUNA","Point: 2018-04-09, LADY TUNA","Point: 2018-04-10, LADY TUNA","Point: 2018-04-11, LADY TUNA","Point: 2018-04-11, LADY TUNA","Point: 2018-04-13, LADY TUNA","Point: 2018-04-13, LADY TUNA","Point: 2018-04-14, LADY TUNA","Point: 2018-04-14, LADY TUNA","Point: 2018-04-20, LADY TUNA","Point: 2018-04-21, LADY TUNA","Point: 2018-04-22, LADY TUNA","Point: 2018-03-20, SHOTA MARU","Point: 2018-03-20, SHOTA MARU","Point: 2018-03-21, SHOTA MARU","Point: 2018-03-21, SHOTA MARU","Point: 2018-03-23, SHOTA MARU","Point: 2018-03-27, SHOTA MARU","Point: 2018-03-27, SHOTA MARU","Point: 2018-03-28, SHOTA MARU","Point: 2018-03-31, SHOTA MARU","Point: 2018-04-02, SHOTA MARU","Point: 2018-04-04, SHOTA MARU","Point: 2018-04-04, SHOTA MARU","Point: 2018-04-05, SHOTA MARU","Point: 2018-04-06, SHOTA MARU","Point: 2018-04-07, SHOTA MARU","Point: 2018-04-07, SHOTA MARU","Point: 2018-04-08, SHOTA MARU","Point: 2018-04-08, SHOTA MARU","Point: 2018-04-09, SHOTA MARU","Point: 2018-04-09, SHOTA MARU","Point: 2018-04-10, SHOTA MARU","Point: 2018-04-11, SHOTA MARU","Point: 2018-04-12, SHOTA MARU","Point: 2018-04-04, TAISEI MARU NO 24","Point: 2018-04-04, TAISEI MARU NO 24","Point: 2018-04-05, TAISEI MARU NO 24","Point: 2018-04-07, TAISEI MARU NO 24","Point: 2018-04-10, TAISEI MARU NO 24","Point: 2018-04-10, TAISEI MARU NO 24","Point: 2018-04-10, TAISEI MARU NO 24","Point: 2018-04-11, TAISEI MARU NO 24","Point: 2018-04-12, TAISEI MARU NO 24","Point: 2018-04-13, TAISEI MARU NO 24","Point: 2018-04-14, TAISEI MARU NO 24","Point: 2018-04-16, TAISEI MARU NO 24","Point: 2018-04-17, TAISEI MARU NO 24","Point: 2018-04-21, TAISEI MARU NO 24","Point: 2018-04-22, TAISEI MARU NO 24","Point: 2018-04-28, TAISEI MARU NO 24","Point: 2018-04-29, TAISEI MARU NO 24","Point: 2018-04-30, TAISEI MARU NO 24","Point: 2018-05-01, TAISEI MARU NO 24","Point: 2018-05-01, TAISEI MARU NO 24","Point: 2018-05-02, TAISEI MARU NO 24","Point: 2018-05-03, TAISEI MARU NO 24","Point: 2018-05-03, TAISEI MARU NO 24","Point: 2018-05-04, TAISEI MARU NO 24","Point: 2018-05-05, TAISEI MARU NO 24","Point: 2018-05-05, TAISEI MARU NO 24","Point: 2018-05-06, TAISEI MARU NO 24","Point: 2018-05-08, TAISEI MARU NO 24","Point: 2018-05-08, TAISEI MARU NO 24","Point: 2018-05-08, TAISEI MARU NO 24","Point: 2018-05-10, TAISEI MARU NO 24","Point: 2018-05-11, TAISEI MARU NO 24","Point: 2018-05-13, TAISEI MARU NO 24","Point: 2018-05-20, TAISEI MARU NO 24","Point: 2018-05-21, TAISEI MARU NO 24","Point: 2018-05-21, TAISEI MARU NO 24","Point: 2018-05-22, TAISEI MARU NO 24","Point: 2018-05-23, TAISEI MARU NO 24","Point: 2018-05-24, TAISEI MARU NO 24","Point: 2018-05-24, TAISEI MARU NO 24","Point: 2018-05-25, TAISEI MARU NO 24","Point: 2018-05-28, TAISEI MARU NO 24","Point: 2018-05-29, TAISEI MARU NO 24","Point: 2018-05-30, TAISEI MARU NO 24","Point: 2018-05-31, TAISEI MARU NO 24","Point: 2018-05-31, TAISEI MARU NO 24","Point: 2018-06-05, TAISEI MARU NO 24","Point: 2018-06-06, TAISEI MARU NO 24","Point: 2018-06-07, TAISEI MARU NO 24","Point: 2018-04-25, MEITA MARU","Point: 2018-04-25, MEITA MARU","Point: 2018-04-29, MEITA MARU","Point: 2018-04-30, MEITA MARU","Point: 2018-05-05, MEITA MARU","Point: 2018-05-07, MEITA MARU","Point: 2018-05-08, MEITA MARU","Point: 2018-05-09, MEITA MARU","Point: 2018-05-11, MEITA MARU","Point: 2018-05-11, MEITA MARU","Point: 2018-05-14, MEITA MARU","Point: 2018-05-15, MEITA MARU","Point: 2018-05-15, MEITA MARU","Point: 2018-05-15, MEITA MARU","Point: 2018-05-16, MEITA MARU","Point: 2018-05-17, MEITA MARU","Point: 2018-05-17, MEITA MARU","Point: 2018-05-17, MEITA MARU","Point: 2018-05-18, MEITA MARU","Point: 2018-05-19, MEITA MARU","Point: 2018-05-26, MEITA MARU","Point: 2018-05-27, MEITA MARU","Point: 2018-05-28, MEITA MARU","Point: 2018-05-31, MEITA MARU","Point: 2018-06-06, MEITA MARU","Point: 2018-06-07, MEITA MARU","Point: 2018-05-11, VICTORIA 2","Point: 2018-05-11, VICTORIA 2","Point: 2018-05-14, VICTORIA 2","Point: 2018-05-15, VICTORIA 2","Point: 2018-05-19, VICTORIA 2","Point: 2018-05-20, VICTORIA 2","Point: 2018-05-21, VICTORIA 2","Point: 2018-05-29, IBUKI","Point: 2018-05-31, IBUKI","Point: 2018-06-03, IBUKI","Point: 2018-06-06, IBUKI","Point: 2018-06-07, IBUKI","Point: 2018-06-07, IBUKI","Point: 2018-06-09, IBUKI","Point: 2018-06-10, IBUKI","Point: 2018-06-11, IBUKI","Point: 2018-06-11, IBUKI","Point: 2018-06-12, IBUKI","Point: 2018-06-13, IBUKI","Point: 2018-06-14, IBUKI","Point: 2018-06-14, IBUKI","Point: 2018-06-15, IBUKI","Point: 2018-06-16, IBUKI","Point: 2018-06-16, IBUKI","Point: 2018-06-17, IBUKI","Point: 2018-06-19, IBUKI","Point: 2018-06-20, IBUKI","Point: 2018-06-21, IBUKI","Point: 2018-06-21, IBUKI","Point: 2018-06-22, IBUKI","Point: 2018-06-22, IBUKI","Point: 2018-06-23, IBUKI","Point: 2018-06-23, IBUKI","Point: 2018-06-24, IBUKI","Point: 2018-06-24, IBUKI","Point: 2018-06-26, IBUKI","Point: 2018-06-26, IBUKI","Point: 2018-06-29, IBUKI","Point: 2018-06-29, IBUKI","Point: 2018-06-30, IBUKI","Point: 2018-06-30, IBUKI","Point: 2018-07-03, IBUKI","Point: 2018-07-03, IBUKI","Point: 2018-07-04, IBUKI","Point: 2018-07-07, IBUKI","Point: 2018-07-07, IBUKI","Point: 2018-07-07, IBUKI","Point: 2018-07-09, IBUKI","Point: 2018-07-11, IBUKI","Point: 2018-07-11, IBUKI","Point: 2018-07-11, IBUKI","Point: 2018-07-14, IBUKI","Point: 2018-07-15, IBUKI","Point: 2018-07-21, IBUKI","Point: 2018-06-18, TAISEI MARU NO 15","Point: 2018-06-19, TAISEI MARU NO 15","Point: 2018-06-19, TAISEI MARU NO 15","Point: 2018-06-20, TAISEI MARU NO 15","Point: 2018-06-22, TAISEI MARU NO 15","Point: 2018-06-25, TAISEI MARU NO 15","Point: 2018-06-25, TAISEI MARU NO 15","Point: 2018-06-26, TAISEI MARU NO 15","Point: 2018-06-26, TAISEI MARU NO 15","Point: 2018-06-27, TAISEI MARU NO 15","Point: 2018-06-28, TAISEI MARU NO 15","Point: 2018-06-28, TAISEI MARU NO 15","Point: 2018-06-29, TAISEI MARU NO 15","Point: 2018-06-30, TAISEI MARU NO 15","Point: 2018-07-01, TAISEI MARU NO 15","Point: 2018-07-02, TAISEI MARU NO 15","Point: 2018-07-03, TAISEI MARU NO 15","Point: 2018-07-03, TAISEI MARU NO 15","Point: 2018-07-05, TAISEI MARU NO 15","Point: 2018-07-05, TAISEI MARU NO 15","Point: 2018-07-05, TAISEI MARU NO 15","Point: 2018-07-06, TAISEI MARU NO 15","Point: 2018-07-06, TAISEI MARU NO 15","Point: 2018-07-07, TAISEI MARU NO 15","Point: 2018-07-07, TAISEI MARU NO 15","Point: 2018-07-14, TAISEI MARU NO 15","Point: 2018-07-17, TAISEI MARU NO 15","Point: 2018-07-17, TAISEI MARU NO 15","Point: 2018-07-18, TAISEI MARU NO 15","Point: 2018-07-19, TAISEI MARU NO 15","Point: 2018-07-21, TAISEI MARU NO 15","Point: 2018-07-21, TAISEI MARU NO 15","Point: 2018-07-25, TAISEI MARU NO 15","Point: 2018-07-26, TAISEI MARU NO 15","Point: 2018-07-27, TAISEI MARU NO 15","Point: 2018-07-29, TAISEI MARU NO 15","Point: 2018-07-30, TAISEI MARU NO 15","Point: 2018-07-31, TAISEI MARU NO 15","Point: 2018-08-02, TAISEI MARU NO 15","Point: 2018-08-02, TAISEI MARU NO 15","Point: 2018-08-03, TAISEI MARU NO 15","Point: 2018-08-04, TAISEI MARU NO 15","Point: 2018-08-04, TAISEI MARU NO 15","Point: 2018-08-05, TAISEI MARU NO 15","Point: 2018-08-06, TAISEI MARU NO 15","Point: 2018-06-18, TAISEI MARU NO 24","Point: 2018-06-19, TAISEI MARU NO 24","Point: 2018-06-20, TAISEI MARU NO 24","Point: 2018-06-20, TAISEI MARU NO 24","Point: 2018-06-21, TAISEI MARU NO 24","Point: 2018-06-21, TAISEI MARU NO 24","Point: 2018-06-22, TAISEI MARU NO 24","Point: 2018-07-09, GENTA MARU","Point: 2018-07-09, GENTA MARU","Point: 2018-07-12, GENTA MARU","Point: 2018-07-16, GENTA MARU","Point: 2018-07-17, GENTA MARU","Point: 2018-07-19, GENTA MARU","Point: 2018-07-22, GENTA MARU","Point: 2018-07-24, GENTA MARU","Point: 2018-07-26, GENTA MARU","Point: 2018-07-27, GENTA MARU","Point: 2018-07-29, GENTA MARU","Point: 2018-07-30, GENTA MARU","Point: 2018-08-01, GENTA MARU","Point: 2018-08-02, GENTA MARU","Point: 2018-08-03, GENTA MARU","Point: 2018-08-13, TAISEI MARU NO 15","Point: 2018-08-13, TAISEI MARU NO 15"],{"interactive":false,"permanent":false,"direction":"auto","opacity":1,"offset":[0,0],"textsize":"10px","textOnly":false,"className":"","sticky":true},null]}],"setView":[[-10,-10],3,[]],"limits":{"lat":[-38.0051333333333,20.3333333333333],"lng":[-50.1066666666667,13.45]}},"evals":[],"jsHooks":[]}</script>
+<p>Set of functions to run queries to identify encounters, loitering, and vessel tracks
+along with a plotting/mapping function.</p>
+<pre class="r"><code>encounters_query &lt;- function(start_date, end_date) {
+  encounters_q &lt;- &quot;WITH fishing_encounters AS (
+                SELECT 
+                    fishing_vessel,
+                    carrier_vessel,
+                    start_time,
+                    end_time,
+                    mean_latitude,
+                    mean_longitude,
+                    median_distance_km,
+                    median_speed_knots
+                FROM(
+                SELECT
+                    vessel_1_id AS fishing_vessel,
+                    vessel_2_id AS carrier_vessel,
+                    start_time,
+                    end_time,
+                    mean_latitude,
+                    mean_longitude,
+                    median_distance_km,
+                    median_speed_knots
+                FROM
+                    `world-fishing-827.pipe_production_b.encounters`
+                WHERE vessel_1_id in (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE isfishingvessel  ) AND
+                    vessel_2_id IN (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE iscarriervessel ) AND
+                    start_time &gt;= TIMESTAMP(&#39;2017-07-30 00:00:00&#39;) AND 
+                    end_time &lt;= TIMESTAMP(&#39;2018-08-15 00:00:00&#39;)
+                    AND median_speed_knots &lt; 2)
+                UNION ALL (
+                SELECT
+                    vessel_2_id AS fishing_vessel,
+                    vessel_1_id AS carrier_vessel,
+                    start_time,
+                    end_time,
+                    mean_latitude,
+                    mean_longitude,
+                    median_distance_km,
+                    median_speed_knots
+                FROM
+                    `world-fishing-827.pipe_production_b.encounters`
+                WHERE vessel_2_id in (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE isfishingvessel ) AND
+                    vessel_1_id IN (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE iscarriervessel ) AND
+                    start_time &gt;= TIMESTAMP(&#39;2017-07-30 00:00:00&#39;) AND 
+                    end_time &lt;= TIMESTAMP(&#39;2018-08-15 00:00:00&#39;)
+                    AND median_speed_knots &lt; 2))
+                    
+                SELECT * FROM fishing_encounters&quot;
+
+  query_exec(encounters_q, project = &quot;world-fishing-827&quot;, max_pages = Inf, use_legacy_sql = FALSE)
+}
+
+loitering_query &lt;- function(start_date, end_date) {
+  loitering_q &lt;- glue::glue(&quot;SELECT * 
+                FROM 
+                    `world-fishing-827.ICCAT_transshipment.loitering_table2` 
+                WHERE 
+                    --tot_hours &gt; 8 AND
+                    start_timestamp &gt;= &#39;{start_date} 00:00:00&#39; AND
+                    end_timestamp &lt;= &#39;{end_date} 00:00:00&#39;&quot;)
+
+  query_exec(loitering_q, project = &quot;world-fishing-827&quot;, max_pages = Inf, use_legacy_sql = FALSE)
+}
+
+
+# Run query to get ves
+
+vessel_track_query &lt;- function(mmsi, start_date, end_date) {
+  vessel_track_q &lt;- glue::glue(&quot;SELECT
+                    timestamp,
+                    lat,
+                    lon
+                FROM
+                    `gfw_research.pipe_production_b`
+                WHERE _PARTITIONDATE BETWEEN DATE(&#39;{start_date}&#39;) AND
+                        DATE(&#39;{end_date}&#39;) AND
+                        ssvid = &#39;{mmsi}&#39; AND
+                        seg_id in (SELECT seg_id 
+                                FROM 
+                                `gfw_research.pipe_production_b_segs` 
+                                WHERE good_seg)
+                order by timestamp&quot;)
+
+  query_exec(vessel_track_q, project = &quot;world-fishing-827&quot;, max_pages = Inf, use_legacy_sql = FALSE)
+}
+
+
+shp_list &lt;- list(
+  land_sf = &quot;../../../../GlobalFishingWatch/shapefiles/ne_10m_admin_0_countries/ne_10m_admin_0_countries_polygons/ne_10m_admin_0_countries.shp&quot;,
+  eez_sf = &quot;../../../../GlobalFishingWatch/shapefiles/World_EEZ_v8_20140228_LR/World_EEZ_v8_2014.shp&quot;
+)
+
+
+
+#### Plotting function
+
+iccat_events_plotting &lt;- function(mmsi, vessel_id, vessel_name, start_date, end_date, iccat_data,
+                                  encounters_data, loitering_data, vessel_track_data, shp_list) {
+
+  # plotting defaults
+  loitering_point_size &lt;- 0.7
+  loitering_line_size &lt;- 0.5
+  loitering_point_color &lt;- &quot;orange&quot;
+  encounter_point_size &lt;- 2
+  encounter_point_color &lt;- &quot;#72C769&quot;
+  observed_transshipment_size &lt;- 4
+  observed_supply_size &lt;- 4
+
+  vessel_id_qou &lt;- rlang::enquo(vessel_id)
+  mmsi_quo &lt;- rlang::enquo(mmsi)
+  vessel_name_quo &lt;- rlang::enquo(vessel_name)
+  start_quo &lt;- rlang::enquo(start_date)
+  end_quo &lt;- rlang::enquo(end_date)
+
+  # load shapefiles
+  shp_files &lt;- purrr::map(shp_list, sf::read_sf)
+
+  # extract vessel specific events
+  encounters &lt;- encounters_data %&gt;%
+    filter(carrier_vessel %in% !!vessel_id &amp;
+      start_time &gt;= as.POSIXct(toString(!!start_date)) &amp;
+      end_time &lt;= as.POSIXct(toString(!!end_date))) %&gt;%
+    mutate(
+      carrier_mmsi = rep(mmsi, nrow(.)),
+      enc_duration_hr = as.numeric(difftime(end_time, start_time,
+        tz = &quot;UTC&quot;,
+        units = &quot;hours&quot;
+      ))
+    )
+  
+  #print(nrow(encounters))
+  
+  if (nrow(encounters) &lt; 1) {
+    encounters &lt;- encounters %&gt;% 
+      add_row()
+  }
+
+  transhipment &lt;- iccat_data %&gt;%
+    filter(vessel == !!vessel_name &amp;
+      date &gt;= as.Date(!!start_date) &amp;
+      date &lt;= as.Date(!!end_date)) %&gt;%
+    mutate(
+      carrier_mmsi = rep(mmsi, nrow(.)),
+      obs_duration_hr = time_min / 60
+    )
+  
+    #print(nrow(transhipment))
+
+  
+  if (nrow(transhipment) &lt; 1) {
+    transhipment &lt;- transhipment %&gt;% 
+      add_row()
+  }
+
+  loitering &lt;- loitering_data %&gt;%
+    filter(mmsi == !!mmsi &amp;
+      start_timestamp &gt;= as.POSIXct(toString(!!start_date)) &amp;
+      end_timestamp &lt;= as.POSIXct(toString(!!end_date))) %&gt;%
+    dplyr::rename(carrier_mmsi = mmsi)
+  
+    # print(nrow(loitering))
+  
+  if (nrow(loitering) &lt; 1) {
+    loitering &lt;- loitering %&gt;% 
+      add_row()
+  }
+  # pretty title date range
+  title_date_range &lt;- glue::glue(&quot;({format(as.Date(start_date), &#39;%b %Y&#39;)} - {format(as.Date(end_date), &#39;%b %Y&#39;)})&quot;)
+
+  max_lat &lt;- max(c(encounters$mean_latitude, loitering$start_lat, 
+                 loitering$end_lat,transhipment$lat, vessel_track_data$lat ), 
+                 na.rm = TRUE) + 1
+  min_lat &lt;- min(c(encounters$mean_latitude, loitering$start_lat, 
+                 loitering$end_lat,transhipment$lat, vessel_track_data$lat ), 
+                 na.rm = TRUE) - 1
+  max_lon &lt;- max(c(encounters$mean_longitude, loitering$start_lon, 
+                 loitering$end_lon,transhipment$lon, vessel_track_data$lon ), 
+                 na.rm = TRUE) + 1
+  #keep maps from showing voyage to Singapore
+  max_lon &lt;- ifelse(max_lon &gt; 25, 25, max_lon)
+  
+  min_lon &lt;- min(c(encounters$mean_longitude, loitering$start_lon, 
+                 loitering$end_lon, transhipment$lon, vessel_track_data$lon ),
+                 na.rm = TRUE) - 1
+  
+  
+  # make the plot
+  p1 &lt;- ggplot() +
+    geom_sf(
+      data = shp_files[[&quot;land_sf&quot;]],
+      size = 0.3,
+      fill = &quot;grey90&quot;,
+      color = &quot;grey85&quot;
+    ) +
+    geom_sf(
+      data = shp_files[[&quot;eez_sf&quot;]],
+      size = 0.3,
+      fill = NA,
+      color = &quot;grey95&quot;
+    ) +
+    geom_path(
+      data = vessel_track_data,
+      aes(lon,
+        lat,
+        color = &quot;Vessel Track&quot;
+      )
+    ) +
+    geom_point(
+      data = vessel_track_data,
+      aes(lon,
+        lat,
+        color = &quot;AIS Position&quot;
+      ),
+      size = 0.3,
+      alpha = 0.1
+    ) +
+    #geom_point( data = shota_maru_supply_transship_1, 
+    #aes(lon, lat, 
+    #color = &#39;Observed Supply&#39;), 
+    #shape = 21, 
+    #fill = NA, 
+    #size = observed_supply_size) +
+    geom_point(
+      data = transhipment,
+      aes(lon,
+        lat,
+        color = &quot;Observed Fish Transshipment&quot;
+      ),
+      shape = 21,
+      fill = NA,
+      size = observed_transshipment_size
+    ) +
+    geom_segment(
+      data = loitering,
+      aes(
+        x = start_lon,
+        y = start_lat,
+        xend = end_lon,
+        yend = end_lat,
+        color = &quot;Loitering Period&quot;
+      ),
+      size = loitering_line_size
+    ) +
+    geom_point(
+      data = loitering,
+      aes(
+        x = start_lon,
+        y = start_lat,
+        color = &quot;Loitering Period&quot;
+      ),
+      size = loitering_point_size
+    ) +
+    geom_point(
+      data = encounters,
+      aes(mean_longitude,
+        mean_latitude,
+        color = &quot;Detected Encounter&quot;
+      ),
+      size = encounter_point_size
+    ) +
+    scale_color_manual(&quot;&quot;, values = c(
+      &quot;Observed Fish Transshipment&quot; = &quot;red&quot;,
+      &quot;Detected Encounter&quot; = encounter_point_color,
+      &quot;Loitering Period&quot; = loitering_point_color,
+      &quot;AIS Position&quot; = &quot;#2A186C&quot;,
+      &quot;Vessel Track&quot; = &quot;grey70&quot;,
+      &quot;Observed Supply&quot; = &quot;#2A186C&quot;
+    )) +
+    coord_sf(xlim = c(min_lon, max_lon), ylim = c(min_lat, max_lat)) +
+    guides(color = guide_legend(
+      override.aes = list(
+        shape = c(19, 19, 21, 21, NA),
+        linetype = c(&quot;blank&quot;, &quot;blank&quot;, &quot;blank&quot;, &quot;blank&quot;, &quot;solid&quot;),
+        fill = c(NA, &quot;white&quot;, &quot;white&quot;, &quot;white&quot;, NA)
+      )
+    )) +
+    theme_minimal() +
+    theme(
+      legend.position = &quot;bottom&quot;,
+      plot.title = element_text(family = &quot;Roboto&quot;, face = &quot;bold&quot;),
+      plot.subtitle = element_text(family = &quot;Roboto&quot;),
+      axis.text = element_text(family = &quot;Roboto&quot;),
+      axis.title = element_text(family = &quot;Roboto&quot;)
+    ) +
+    xlab(&quot;Longitude&quot;) +
+    ylab(&quot;Latitude&quot;) +
+    labs(title = vessel_name, subtitle = title_date_range)
+
+  # output list of plots and dataframes
+
+  list(
+    voyage_plot = p1,
+    reported_transshipment = transhipment,
+    encounters = encounters,
+    loitering = loitering
+  )
+}</code></pre>
+<pre class="r"><code>vessel_identity &lt;- tibble(
+  callsign = c(
+    &quot;D5JO9&quot;, &quot;JILE&quot;, &quot;D5KG4&quot;, &quot;3ELC8&quot;,
+    &quot;D5JO8&quot;, &quot;7JTK&quot;, &quot;D5JI4&quot;, &quot;3EQX2&quot;,
+    &quot;D5KN7&quot;, &quot;D5KD3&quot;
+  ),
+  mmsi = c(
+    636017162, 431678000, 636017301,
+    370599000, 636017161, 431201000, 636017108,
+    374762000, 636017359, 636017275
+  ),
+  vessel_id = list(
+    &quot;1a2575ce1-1a29-7e70-239a-516a9cdfaa75&quot;,
+    c(
+      &quot;ee8cdf465-532d-ffd0-21d1-bea9e605ea8d&quot;,
+      &quot;a059261f7-7d20-372d-1269-ed4409dcda66&quot;
+    ),
+    &quot;d5926db30-058b-74b6-5e63-0bbc336cbde1&quot;,
+    &quot;901bf1ab6-6ca9-8e0e-22bd-4d576a8a3ddc&quot;,
+    &quot;06239387d-d13f-b439-0770-78afc6197d47&quot;,
+    &quot;3a165ab38-8e2a-2c45-3f10-2228622f68e2&quot;,
+    &quot;b27a8b734-4bf1-fd67-4e05-eb6ef673090b&quot;,
+    &quot;5c95c67b7-742d-6a12-7308-bb5ba780e41a&quot;,
+    &quot;401b15cef-fd3a-5ca0-4ca0-3747ec064864&quot;,
+    &quot;2a4ab224e-e118-4546-cf42-0b58585555ac&quot;
+  )
+)
+
+iccat_reefer_ids &lt;- iccat_obs_fish_2017_2018 %&gt;%
+  select(vessel, callsign) %&gt;%
+  distinct(vessel, callsign) %&gt;%
+  left_join(vessel_identity, by = &quot;callsign&quot;) %&gt;% # above
+  left_join(iccat_voyage_limits, by = &quot;vessel&quot;) # from beginning
+
+
+widgetframe::frameWidget(DT::datatable(iccat_reefer_ids, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5,
+                                                      lengthMenu = c(5, 10, 15, 20))) %&gt;%
+                           DT::formatStyle(colnames(iccat_reefer_ids), fontSize = &#39;65%&#39;),
+                         height = 450, width = &#39;100%&#39;)</code></pre>
+<div id="htmlwidget-2" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-2">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-12.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+<div id="run-the-query-functions-to-get-events-and-vessel-track-data" class="section level4">
+<h4>Run the query functions to get events and vessel track data</h4>
+<pre class="r"><code># all events for relevant time range
+loitering_data &lt;- loitering_query(&quot;2017-08-01&quot;, &quot;2018-08-01&quot;)
+fishing_encounters_2017_2018 &lt;- encounters_query(&quot;2017-08-01&quot;, &quot;2018-08-01&quot;)
+
+# vessel track queries... only run once as they are large
+vessel_track_data &lt;- purrr::set_names(purrr::pmap(
+  .l = list(
+    mmsi = iccat_reefer_ids$mmsi,
+    start_date = iccat_reefer_ids$voyage_start,
+    end_date = iccat_reefer_ids$voyage_end
+  ),
+  .f = vessel_track_query
+), iccat_reefer_ids$vessel)</code></pre>
+<pre class="r"><code># loop through all the vessels and generate plots as long as the
+# vessel track data is available in a list
+
+iccat_2017_2018_events &lt;- purrr::set_names(purrr::pmap(
+  .l = list(
+    mmsi = iccat_reefer_ids$mmsi,
+    vessel_id = iccat_reefer_ids$vessel_id,
+    vessel_name = iccat_reefer_ids$vessel,
+    start_date = iccat_reefer_ids$voyage_start,
+    end_date = iccat_reefer_ids$voyage_end,
+    vessel_track_data = vessel_track_data
+  ),
+  .f = iccat_events_plotting,
+  iccat_data = iccat_obs_fish_2017_2018,
+  encounters_data = fishing_encounters_2017_2018,
+  loitering_data = loitering_data,
+  shp_list = shp_list
+), paste0(iccat_reefer_ids$vessel, &quot; &quot;, iccat_reefer_ids$voyage_start))</code></pre>
+</div>
+</div>
+<div id="how-well-do-we-identify-real-events" class="section level2">
+<h2>How well do we identify real events?</h2>
+<p>A set of functions for matching encounters and loitering events</p>
+<pre class="r"><code> gc_distance &lt;- function(start_lon, start_lat, end_lon, end_lat, lon, lat, match_distance) {
+
+  # function to identify intermediate points on a great circle between
+  # two end points, and then identify the minimum distance between
+  # these points and separate point.
+
+  # currently useful for identifying points near a particular segment
+  # of a great circle path. geosphere::dist2gc() does something similar
+  # but points can be anywhere on the great circle
+
+  # note uses straight-line loitering path... if path is curvilinear
+  # this may not work well.
+
+  # Use:
+  # gc_distance(100, 0, 150, 0, 125, 1, 5)
+
+  R &lt;- 6378.137 # (earth radius in km)
+
+  if (!(is.na(start_lon))) {
+    # straight-line length of loitering event
+    loiter_distance &lt;- geosphere::distHaversine(
+      p1 = c(start_lon, start_lat),
+      p2 = c(end_lon, end_lat),
+      r = R
+    )
+    # number of points so 2.5km appart
+    n &lt;- loiter_distance / (match_distance / 2)
+
+    loitering_pnts &lt;- geosphere::gcIntermediate(
+      p1 = c(start_lon, start_lat),
+      p2 = c(end_lon, end_lat),
+      n = n
+    )
+
+    dist &lt;- geosphere::distHaversine(
+      p1 = loitering_pnts,
+      p2 = c(lon, lat),
+      r = R
+    )
+
+    min_dist_km &lt;- min(dist)
+    min_dist_km
+  } else {
+    min_dist_km &lt;- NA
+    min_dist_km
+  }
+}
+
+
+# function to wrap Haversine distance calculate for use with purrr
+calc_dist_km &lt;- function(mean_longitude, mean_latitude, lon, lat) {
+  p1 &lt;- c(mean_longitude, mean_latitude)
+  p2 &lt;- c(lon, lat)
+  r &lt;- 6378.137
+
+  distance &lt;- geosphere::distHaversine(p1, p2, r)
+  distance
+}</code></pre>
+<div id="matching-encounters-and-loitering-to-observed-fish-transshipments" class="section level4">
+<h4>Matching encounters and loitering to observed fish transshipments</h4>
+<p>Function to match encounters</p>
+<pre class="r"><code>#encounters
+encounters_matches &lt;- function(obs_transshipments, encounters_data, match_distance = 10) {
+  matches &lt;- encounters_data %&gt;%
+    mutate(
+      start_range1 = as.Date(start_time - lubridate::hours(12)),
+      end_range1 = as.Date(end_time + lubridate::hours(12))
+    ) %&gt;%
+    fuzzyjoin::fuzzy_left_join(obs_transshipments,
+      by = c(
+        &quot;start_range1&quot; = &quot;date&quot;,
+        &quot;end_range1&quot; = &quot;date&quot;
+      ),
+      match_fun = list(`&lt;=`, `&gt;=`)
+    ) %&gt;%
+    mutate(distance = purrr::pmap_dbl(
+      .l = list(
+        mean_longitude,
+        mean_latitude,
+        lon,
+        lat
+      ),
+      .f = calc_dist_km
+    )) %&gt;%
+    group_by(start_time, end_time, mean_latitude, mean_longitude, enc_duration_hr) %&gt;%
+    mutate(min_dist = min(distance)) %&gt;%
+    filter(distance == min_dist | is.na(date)) %&gt;%
+    mutate(obs_duration_hr = time_min / 60) %&gt;%
+    dplyr::select(
+      carrier_mmsi.x, fishing_vessel, start_time, end_time, mean_latitude, mean_longitude,
+      enc_duration_hr, date, lat, lon, vessel, transshipped_fish,
+      total_tonnage_obs_transshipped, obs_duration_hr, min_dist
+    ) %&gt;%
+    rename(
+      carrier_mmsi = carrier_mmsi.x, enc_start = start_time, 
+      enc_end = end_time, enc_latitude = mean_latitude,
+      enc_longitude = mean_longitude, enc_duration_hr = enc_duration_hr,
+      trans_date = date, trans_lat = lat, trans_lon = lon,
+      trans_fish = transshipped_fish, tot_ton_trans = total_tonnage_obs_transshipped,
+      obs_duration_hr = obs_duration_hr, min_dist = min_dist
+    ) %&gt;%
+    mutate(match = ifelse(min_dist &gt; match_distance | is.na(min_dist), FALSE, TRUE)) %&gt;%
+    dplyr::select(match, everything())
+
+  matches
+}</code></pre>
+</div>
+<div id="how-many-of-the-observed-events-are-matched-to-a-loitering-event" class="section level3">
+<h3>How many of the observed events are matched to a loitering event</h3>
+<p>Function to match loitering events</p>
+<pre class="r"><code># loitering
+loitering_matches &lt;- function(obs_transshipments, loitering_data, match_distance = 5) {
+  matches &lt;- loitering_data %&gt;%
+    mutate(
+      start_range1 = as.Date(start_timestamp - lubridate::hours(12)),
+      end_range1 = as.Date(end_timestamp + lubridate::hours(12))
+    ) %&gt;%
+    fuzzyjoin::fuzzy_left_join(obs_transshipments, by = c(
+      &quot;start_range1&quot; = &quot;date&quot;,
+      &quot;end_range1&quot; = &quot;date&quot;
+    ), match_fun = list(`&lt;=`, `&gt;=`)) %&gt;%
+    mutate(min_dist = purrr::pmap_dbl(
+      .l = list(
+        start_lon,
+        start_lat,
+        end_lon,
+        end_lat,
+        lon,
+        lat
+      ),
+      .f = gc_distance,
+      match_distance
+    )) %&gt;%
+    group_by(start_timestamp, end_timestamp, start_lat, start_lon, tot_hours) %&gt;%
+    mutate(obs_duration_hr = time_min / 60) %&gt;%
+    dplyr::select(
+      start_timestamp, end_timestamp, start_lat,
+      start_lon, end_lat, end_lon, tot_hours, date,
+      lat, lon, vessel, total_tonnage_obs_transshipped, obs_duration_hr,
+      min_dist
+    ) %&gt;%
+    rename(
+      loit_start = start_timestamp, loit_end = end_timestamp,
+      loit_start_latitude = start_lat, loit_start_longitude = start_lon,
+      loit_end_latitude = end_lat, loit_end_longitude = end_lon,
+      loit_duration_hr = tot_hours, trans_date = date,
+      trans_lat = lat, trans_lon = lon,
+      tot_ton_trans = total_tonnage_obs_transshipped,
+      obs_duration_hr = obs_duration_hr, min_dist = min_dist
+    ) %&gt;%
+    mutate(match = ifelse(min_dist &gt; match_distance |is.na(min_dist), FALSE, TRUE)) %&gt;%
+    dplyr::select(match, everything())
+
+  # fraction_matched = sum(matches$match)/nrow(matches)
+  # results &lt;- list(match_df = matches, frac_match = fraction_matched)
+  matches
+}</code></pre>
+<div id="run-the-matching-functions" class="section level4">
+<h4>Run the matching functions</h4>
+<pre class="r"><code>encounters_match_list &lt;- list()
+loitering_match_list &lt;- list()
+# transshipment_encounters_match &lt;- list()
+# transshipment_loiter_match &lt;- list()
+
+for (i in seq_len(length(iccat_2017_2018_events))) {
+  encounters_match_list[names(iccat_2017_2018_events[i])] &lt;-
+    list(encounters_matches(
+      iccat_2017_2018_events[[i]]$reported_transshipment,
+      iccat_2017_2018_events[[i]]$encounters
+    ))
+  loitering_match_list[names(iccat_2017_2018_events[i])] &lt;-
+    list(loitering_matches(
+      iccat_2017_2018_events[[i]]$reported_transshipment,
+      iccat_2017_2018_events[[i]]$loitering
+    ))
+  # transshipment_encounters_match[names(iccat_2017_2018_events[i])] &lt;-
+  #                list(match_obs_encounters(iccat_2017_2018_events[[i]]$reported_transshipment,
+  #                                         iccat_2017_2018_events[[i]]$encounters))
+  #  transshipment_loiter_match[names(iccat_2017_2018_events[i])] &lt;-
+  #                list(match_obs_loitering(iccat_2017_2018_events[[i]]$reported_transshipment,
+  #                                        iccat_2017_2018_events[[i]]$loitering))
+}
+
+encounters_match_tot &lt;- dplyr::bind_rows(encounters_match_list, .id = &quot;column_label&quot;)
+loiter_match_tot &lt;- dplyr::bind_rows(loitering_match_list, .id = &quot;column_label&quot;)
+# transshipment_encounters_match_tot &lt;- dplyr::bind_rows(transshipment_encounters_match, .id = &quot;column_label&quot;)
+# transshipment_loiter_match_tot &lt;- dplyr::bind_rows(transshipment_loiter_match, .id = &quot;column_label&quot;)</code></pre>
+</div>
+<div id="total-matching" class="section level4">
+<h4>Total Matching</h4>
+<div id="encounters" class="section level5">
+<h5>Encounters</h5>
+<div id="htmlwidget-3" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-3">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-25.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+<div id="loitering-events" class="section level5">
+<h5>Loitering Events</h5>
+<div id="htmlwidget-4" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-4">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-26.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+</div>
+</div>
+<div id="match-by-vessel-voyage" class="section level3">
+<h3>Match by Vessel Voyage</h3>
+<div id="total-number-of-observed-transshipment-events" class="section level5">
+<h5>Total number of observed transshipment events</h5>
+<pre class="r"><code>#number of transshipment events
+events &lt;- iccat_obs_fish_2017_2018 %&gt;% 
+  group_by(column_label) %&gt;% 
+  count()</code></pre>
+<div id="htmlwidget-5" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-5">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-28.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+<div id="encounters-matched-by-observered-transshipment" class="section level4">
+<h4>Encounters Matched by Observered Transshipment</h4>
+<p>We find that encounters alone detect less than 30% (overall) of the
+actual transshipments reported by observers. Thus encounters, while useful, don’t
+tell anywhere near the entire story. It will take a bit more examination to determine
+why the encounters miss events. The obvious possibilities are that the fishing vessels</p>
+<ol style="list-style-type: decimal">
+<li>do not have AIS<br />
+</li>
+<li>do not have AIS on during the transshipment<br />
+</li>
+<li>the encounter does not match our rule set (&gt;2 hours, &lt;2 knots, &lt;500 meters)</li>
+</ol>
+<pre class="r"><code># by vessel/voyage
+encounters_match_counts &lt;- encounters_match_tot %&gt;%
+  group_by(column_label, match, trans_date, trans_lat, trans_lon) %&gt;%
+  summarize(min_distance = min(min_dist)) %&gt;%
+  group_by(column_label) %&gt;%
+  summarise(matches = sum(match))
+
+encounter_obs_frac &lt;- encounters_match_counts %&gt;%
+  inner_join(events, 
+             by = &quot;column_label&quot;) %&gt;%
+  mutate(frac_match = matches / n)</code></pre>
+<div id="htmlwidget-6" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-6">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-30.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+<div id="loitering-events-matched-to-observered-transshipment" class="section level4">
+<h4>Loitering Events Matched to Observered Transshipment</h4>
+<p>In this case I have used all loitering events. In previous publications we have
+defined loitering events in terms of events &gt;8 hours where speeds were &lt;2 knots.
+I have found that this misses alot of the actual transshipment events (they are not that long)
+or at least the slow periods is less than 8 hours.</p>
+<div id="number-of-loitering-matches" class="section level5">
+<h5>Number of loitering matches</h5>
+<pre class="r"><code>loitering_match_counts &lt;- loiter_match_tot %&gt;%
+  #filter(column_label == &#39;FUTAGAMI 2017-10-28&#39;) %&gt;%
+  group_by(column_label, match, trans_date, trans_lat, trans_lon) %&gt;%
+  summarize(min_distance = min(min_dist)) %&gt;%
+  group_by(column_label) %&gt;%
+  summarise(matches = sum(match)) 
+
+loiter_obs_frac &lt;- loitering_match_counts %&gt;%
+  inner_join(events, 
+             by = &#39;column_label&#39;) %&gt;%
+  mutate(frac_match = matches/n)</code></pre>
+<div id="htmlwidget-7" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-7">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-32.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+</div>
+<div id="number-of-encounter-events-matched-out-of-all-encounter-events" class="section level4">
+<h4>Number of Encounter Events matched out of all Encounter Events</h4>
+<p>How many encounters are random and how many are actually matched?<br />
+This just shows that despite that fact that encounters only match 30% of the total
+observed transshipments, in many cases if of the encounters that we do identify most
+do correspond to an actual event… as opposed to being a encounter where no transshipment
+event occured.</p>
+<p><br></p>
+<p>Keep in mind that these are also only fish transshipments… some of the encounters
+may match with a supply transshipment. In the current set up this will be recorded as
+a non-match because that encounter is not a fish transshipment. Still there should be
+some credit for having detected two vessels in close proximity and where additional
+cargo could be exchanged.</p>
+<pre class="r"><code>x &lt;- list()
+for (i in seq(1, length(iccat_2017_2018_events))) {
+  x[names(iccat_2017_2018_events[i])] &lt;- list(iccat_2017_2018_events[[i]]$encounters)
+  df &lt;- bind_rows(x, .id = &quot;column_label&quot;)
+}
+
+tot_encounters &lt;- df %&gt;%
+  group_by(column_label) %&gt;%
+  summarize(n = n())
+
+
+matched_encounters &lt;- encounters_match_tot %&gt;%
+  group_by(column_label) %&gt;%
+  summarize(match = sum(match))</code></pre>
+<pre class="r"><code>encounter_match_frac &lt;- matched_encounters %&gt;%
+  inner_join(tot_encounters,
+             by = &quot;column_label&quot;) %&gt;%
+  mutate(frac_match = match / n)</code></pre>
+<div id="htmlwidget-8" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-8">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-35.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+<div id="number-of-loitering-events-match-out-of-all-loitering-events" class="section level4">
+<h4>Number of Loitering Events match out of all loitering events</h4>
+<p>How many loitering events are random and how many are actually matched?</p>
+<p>This is not that useful at this moment. As its possible for a single loitering
+event to match multiple actual transshipment events.</p>
+<pre class="r"><code>total_loitering_events &lt;- loiter_match_tot %&gt;%
+  ungroup() %&gt;%
+  dplyr::select(column_label, loit_start, loit_end, 
+                loit_start_latitude, loit_start_longitude,
+                loit_end_latitude, loit_end_longitude) %&gt;%
+  distinct(column_label, loit_start, loit_end, loit_start_latitude, 
+           loit_start_longitude,loit_end_latitude, loit_end_longitude) %&gt;%
+  group_by(column_label) %&gt;%
+  count()</code></pre>
+<pre class="r"><code>loiter_match_frac &lt;- loitering_match_counts %&gt;%
+  inner_join(total_loitering_events, 
+             by = &#39;column_label&#39;) %&gt;%
+  mutate(frac_match = matches/n)</code></pre>
+<div id="htmlwidget-9" style="width:100%;height:450px;" class="widgetframe html-widget"></div>
+<script type="application/json" data-for="htmlwidget-9">{"x":{"url":"/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html//widgets/widget_unnamed-chunk-38.html","options":{"xdomain":"*","allowfullscreen":false,"lazyload":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+</div>
+</div>
+<div id="mapping-voyages" class="section level2">
+<h2>Mapping Voyages</h2>
+<div id="genta-maru" class="section level3">
+<h3>GENTA MARU</h3>
+<div id="voyage-1" class="section level5">
+<h5>Voyage 1</h5>
+<pre class="r"><code>iccat_2017_2018_events$`GENTA MARU 2017-08-18`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;GENTA MARU 2017-08-18&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;GENTA MARU 2017-08-18&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-39-1.png" width="3600" /></p>
+<div id="voyage-2" class="section level6">
+<h6>Voyage 2</h6>
+<pre class="r"><code>iccat_2017_2018_events$`GENTA MARU 2018-01-14`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;GENTA MARU 2018-01-14&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;GENTA MARU 2018-01-14&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-40-1.png" width="3600" /></p>
+</div>
+<div id="voyage-3" class="section level6">
+<h6>Voyage 3</h6>
+<pre class="r"><code>iccat_2017_2018_events$`GENTA MARU 2018-07-06`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;GENTA MARU 2018-07-06&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;GENTA MARU 2018-07-06&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-41-1.png" width="3600" /></p>
+</div>
+</div>
+</div>
+<div id="taisei-maru-no-24" class="section level3">
+<h3>TAISEI MARU NO 24</h3>
+<p>This vessel is an example of a voyage where we had relatively low levels of matching
+between loitering and actual events <code>See also TAISEI MARU NO 15</code>. You can see that
+the events (red circles) occur in regions where visually we might expect an event, but
+where the loitering algorithm did not detect an event. This needs to be explored to
+determine what features of theselocations are missing from our rule based algorithm
+and how we might detect them more accurately.</p>
+<p><br></p>
+<p>It is also important to note that despite a visual appearance of matching, my current
+algorithm requires that an observed transshipment must be within 5 km of a loitering
+period and within 12 hours. Thus there are situations where an event appears well
+matched, but doesn’t actually meet this requirement.</p>
+<p><br>
+##### Voyage 1</p>
+<pre class="r"><code>iccat_2017_2018_events$`TAISEI MARU NO 24 2017-10-05`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;TAISEI MARU NO 24 2017-10-05&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;TAISEI MARU NO 24 2017-10-05&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-42-1.png" width="3600" /></p>
+<div id="voyage-2-1" class="section level6">
+<h6>Voyage 2</h6>
+<pre class="r"><code>iccat_2017_2018_events$`TAISEI MARU NO 24 2018-03-30`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;TAISEI MARU NO 24 2018-03-30&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;TAISEI MARU NO 24 2018-03-30&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-43-1.png" width="3600" /></p>
+</div>
+<div id="voyage-3-1" class="section level6">
+<h6>Voyage 3</h6>
+<pre class="r"><code>iccat_2017_2018_events$`TAISEI MARU NO 24 2018-06-15`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;TAISEI MARU NO 24 2018-06-15&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;TAISEI MARU NO 24 2018-06-15&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-44-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="futagami" class="section level3">
+<h3>FUTAGAMI</h3>
+<div id="voyage-1-1" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`FUTAGAMI 2017-10-28`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;FUTAGAMI 2017-10-28&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;FUTAGAMI 2017-10-28&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-45-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="ibuki" class="section level3">
+<h3>IBUKI</h3>
+<div id="voyage-1-2" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`IBUKI 2017-11-15`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;IBUKI 2017-11-15&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;IBUKI 2017-11-15&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-46-1.png" width="3600" /></p>
+</div>
+<div id="voyage-2-2" class="section level6">
+<h6>Voyage 2</h6>
+<pre class="r"><code>iccat_2017_2018_events$`IBUKI 2018-05-27`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;IBUKI 2018-05-27&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;IBUKI 2018-05-27&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-47-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="meita-maru" class="section level3">
+<h3>MEITA MARU</h3>
+<div id="voyage-1-3" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`MEITA MARU 2017-11-14`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;MEITA MARU 2017-11-14&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;MEITA MARU 2017-11-14&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-48-1.png" width="3600" /></p>
+</div>
+<div id="voyage-2-3" class="section level6">
+<h6>Voyage 2</h6>
+<pre class="r"><code>iccat_2017_2018_events$`MEITA MARU 2018-04-18`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;MEITA MARU 2018-04-18&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;MEITA MARU 2018-04-18&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-49-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="taisei-maru-no-15" class="section level3">
+<h3>TAISEI MARU NO 15</h3>
+<p>This vessel is an example of a voyage where we had relatively low levels of matching
+between loitering and actual events (14/45). You can see that the events (red circles) occur
+in regions where visually we might expect an event, but where the loitering algorithm did
+not detect an event. This needs to be explored to determine what features of these
+locations are missing from our rule based algorithm and how we might detect them
+more accurately.</p>
+<p><br></p>
+<p>It is also important to note that despite a visual appearance of matching, my current
+algorithm requires that an observed transshipment must be within 5 km of a loitering
+period and within 12 hours. Thus there are situations where an event appears well
+matched, but doesn’t actually meet this requirement.</p>
+<p><br></p>
+<div id="voyage-1-4" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`TAISEI MARU NO 15 2017-12-01`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;TAISEI MARU NO 15 2017-12-01&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;TAISEI MARU NO 15 2017-12-01&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-50-1.png" width="3600" /></p>
+</div>
+<div id="voyage-2-4" class="section level6">
+<h6>Voyage 2</h6>
+<pre class="r"><code>iccat_2017_2018_events$`TAISEI MARU NO 15 2018-06-12`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;TAISEI MARU NO 15 2018-06-12&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;TAISEI MARU NO 15 2018-06-12&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-51-1.png" width="3600" /></p>
+</div>
+<div id="voyage-3-2" class="section level6">
+<h6>Voyage 3</h6>
+<pre class="r"><code>iccat_2017_2018_events$`TAISEI MARU NO 15 2018-08-10`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;TAISEI MARU NO 15 2018-08-10&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;TAISEI MARU NO 15 2018-08-10&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<pre><code>## Warning: Removed 1 rows containing missing values (geom_segment).</code></pre>
+<pre><code>## Warning: Removed 1 rows containing missing values (geom_point).</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-52-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="chikuma" class="section level3">
+<h3>CHIKUMA</h3>
+<div id="voyage-1-5" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`CHIKUMA 2018-02-01`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;CHIKUMA 2018-02-01&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;CHIKUMA 2018-02-01&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-53-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="lady-tuna" class="section level3">
+<h3>LADY TUNA</h3>
+<div id="voyage-1-6" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`LADY TUNA 2018-02-22`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;LADY TUNA 2018-02-22&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;LADY TUNA 2018-02-22&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-54-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="shota-maru" class="section level3">
+<h3>SHOTA MARU</h3>
+<div id="voyage-1-7" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`SHOTA MARU 2018-03-12`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;SHOTA MARU 2018-03-12&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;SHOTA MARU 2018-03-12&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-55-1.png" width="3600" /></p>
+</div>
+</div>
+<div id="victoria" class="section level3">
+<h3>VICTORIA</h3>
+<div id="voyage-1-8" class="section level6">
+<h6>Voyage 1</h6>
+<pre class="r"><code>iccat_2017_2018_events$`VICTORIA 2 2018-04-30`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %&gt;%
+    filter(column_label == &quot;VICTORIA 2 2018-04-30&quot; &amp;
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = &quot;pink&quot;
+) +
+  geom_point(
+    data = encounters_match_tot %&gt;%
+      filter(column_label == &quot;VICTORIA 2 2018-04-30&quot; &amp;
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = &quot;pink&quot;
+  )</code></pre>
+<p><img src="/portfolio/iccat_transshipment_analysis_2017_2018_files/figure-html/unnamed-chunk-56-1.png" width="3600" /></p>
+</div>
+</div>
+</div>
+<div id="extra" class="section level2">
+<h2>EXTRA</h2>
+<p>GENTA MARU 2017 voyage
+<a href="http://globalfishingwatch.org/map/workspace/udw-v2-1b6626e0-90dd-4fa5-a91f-c8407a605cfa" class="uri">http://globalfishingwatch.org/map/workspace/udw-v2-1b6626e0-90dd-4fa5-a91f-c8407a605cfa</a></p>
+<pre class="r"><code>gentamaru_encounters_2017 &lt;- fishing_encounters_2017_2018 %&gt;%
+    filter(carrier_vessel == &#39;1a2575ce1-1a29-7e70-239a-516a9cdfaa75&#39; &amp;
+               start_time &gt;= as.POSIXct(&#39;2017-08-18&#39;) &amp;
+               end_time &lt;= as.POSIXct(&#39;2017-09-19&#39;))
+
+gentamaru_encounters &lt;- fishing_encounters_2017_2018 %&gt;%
+    filter(carrier_vessel == &#39;1a2575ce1-1a29-7e70-239a-516a9cdfaa75&#39; &amp;
+               start_time &gt;= as.POSIXct(&#39;2018-07-06&#39;) &amp;
+               end_time &lt;= as.POSIXct(&#39;2018-08-07&#39;))
+
+taiseimaru15_encounters &lt;- fishing_encounters_2017_2018 %&gt;%
+    filter(carrier_vessel == &#39;3a165ab38-8e2a-2c45-3f10-2228622f68e2&#39; &amp;
+               start_time &gt;= as.POSIXct(&#39;2018-06-12&#39;) &amp;
+               end_time &lt;= as.POSIXct(&#39;2018-08-09&#39;)) %&gt;%
+    arrange(start_time) %&gt;%
+    mutate(row = row_number())</code></pre>
+<p>Don’t use encounter 6 for training. It doesn’t appear to match</p>
+<pre class="r"><code>test_encounters &lt;- rbind(taiseimaru15_encounters %&gt;%
+    filter(row != 6) %&gt;%
+    select(-row),
+    gentamaru_encounters ,
+    gentamaru_encounters_2017 )
+
+
+readr::write_csv(test_encounters, &#39;~/Documents/GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/initial_encounters_for_labelling.csv&#39;)</code></pre>
+</div>
