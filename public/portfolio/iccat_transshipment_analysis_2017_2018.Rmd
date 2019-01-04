@@ -11,8 +11,7 @@ categories: R
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
-#### Take-home
+#### Take-away
 
 This is an analysis of the observer reported transshipments from ICCAT. These
 events were recorded between 2017 and mid-2018. The attempt is made here to determine
@@ -26,33 +25,34 @@ median: 132.5 minutes) and the vast majority less than 6 hours. There is a stron
 relationship between transshipment duration and the amount of catch transferred with an 
 adjusted R-square of 0.864.  See the section called 
 
-##### Encounter Matching  
+##### Encounter Matching
 We found that on average less than 30% of the actual transshipments are identified by 
 GFW encounters (mean: 0.2986888, median: 0.2526596, range: 0.0625 to 0.8571). We
-outline all the matches here [Encounters] and summarize the by vessel and voyage [here](Encounters Matched by Observered Transshipment)
+outline all the matches [here](#encounters) and summarize the by vessel and voyage 
+[here](#encounters-matched-by-observered-transshipment)
 
-##### Loitering Matching  
+##### Loitering Matching
 Loitering events match reported transshipment much better. It must be pointed out that
 here we are using loitering events as any period where the carrier vessel is travelling
 at less than 2 knots for at least 2 hours. Note that this 2 hour time period is different
 than the 8 hours that has been used in other GFW publications. This was because we
 found that the 8 hour rule meant that we were unable to match a large number of actual
-transshipments [shown here](Loitering Matches (8 hour)). This is important because while 
+transshipments [shown here](#eight-hour-loitering-matches). This is important because while 
 globally there are large number of 8 hour loitering
 events there are even more 2 hour loitering events. We found that using this new
 definition of loitering that on average roughly 81% of the observered transshipment 
 events were matched to a GFW loitering event (mean: 0.8112678, median: 0.8823529, 
 range (by vessel and voyage): 0.3111111 to 1).  We outline all matched loitering events
-[here](Loitering Events) and again summarize the matching by vessel and voyage 
-[here](Loitering Events Matched to Observered Transshipment)  
-
+[here](#loitering-events) and again summarize the matching by vessel and voyage 
+[here](#loitering-events-matched-to-observered-transshipment)
 
 ##### Intervessel Matching Differences
 As evidence by the range is that some vessels/voyages have better matching than others. 
 In fact it appears that several carrier vessels consistently have poorer matching with
 our current algorithms. `TAISEI MARU NO 15`, `TAISEI MARU NO 24` perform poorly consistently.
-We still need to explore why this is, though there are some possibilities. With [TAISEI MARU NO 24](TAISEI MARU NO 24) and
-[TAISEI MARU NO 15](TAISEI MARU NO 15) shown here.
+We still need to explore why this is, though there are some possibilities. With 
+[TAISEI MARU NO 24](#taisei-maru-no-24) and
+[TAISEI MARU NO 15](#taisei-maru-no-15) shown here.
 
   1. these vessels conduct transshipments in a different manner which requires different rules  
   2. with regards to encounters, these vessels may operate with fishing vessels that do not 
@@ -65,12 +65,11 @@ While many actual transshipments were not identified by encounters, we found tha
 when an encounters was identified it often corresponded to an actual transshipment 
 (mean: 0.6867656, median: 0.7, range: 0.3571 to 1). Thus encounters have limited recall,
 but are relatively precise. The limited number of actual encounters makes the 
-comparison a bit tentative. [Here](Number of Encounter Events matched out of all Encounter Events) 
+comparison a bit tentative. [Here](#number-of-encounter-events-matched-out-of-all-encounter-events) 
 
 A similar analysis was done for loitering events, but is a bit more complicated as
 a single loitering event may match multiple transshipment events. Thus the number of matches
 may exceed the number of loitering events, though not all loitering events may have a match.  
-
 <br>
 
 ### Analysis
@@ -1877,7 +1876,7 @@ loiter_match_tot_8h <- dplyr::bind_rows(loitering_match_list_8h, .id = "column_l
 
 ```
 
-### Loitering Matches (8 hour)  
+### Eight-hour Loitering Matches
   
 With 8 hour with minimum duration for loitering events the number of matches decreases
 considerably.
