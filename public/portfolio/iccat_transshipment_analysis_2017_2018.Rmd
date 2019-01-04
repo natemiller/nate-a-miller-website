@@ -1,0 +1,1885 @@
+---
+title: "ICCAT Observer Data Comparison 2017-2018"
+author: "Nate Miller"
+tags:
+- transshipment
+- ICCAT
+categories: R
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### Take-home
+
+This is an analysis of the observer reported transshipments from ICCAT. These
+events were recorded between 2017 and mid-2018. The attempt is made here to determine
+how well the GFW events (encounters/likely transshipments and loitering events) 
+approximate actual events. This was done by identifying the proximity of these events to 
+actual observer reported transshipments.  
+
+##### Transshipment Features
+We found that transshipment events generall occur quickly with most requring 1-2 hours 
+median: 132.5 minutes) and the vast majority less than 6 hours. There is a strong linear 
+relationship between transshipment duration and the amount of catch transferred with an 
+adjusted R-square of 0.864.  See the section called 
+
+##### Encounter Matching
+We found that on average less than 30% of the actual transshipments are identified by 
+GFW encounters (mean: 0.2986888, median: 0.2526596, range: 0.0625 to 0.8571). We
+outline all the matches here [Encounters] and summarize the by vessel and voyage [here](Encounters Matched by Observered Transshipment)
+
+##### Loitering Matching
+Loitering events match reported transshipment much better. It must be pointed out that
+here we are using loitering events as any period where the carrier vessel is travelling
+at less than 2 knots for at least 2 hours. Note that this 2 hour time period is different
+than the 8 hours that has been used in other GFW publications. This was because we
+found that the 8 hour rule meant that we were unable to match a large number of actual
+transshipments. This is important because while globally there are large number of 8 hour loitering
+events there are even more 2 hour loitering events. We found that using this new
+definition of loitering that on average roughly 81% of the observered transshipment 
+events were matched to a GFW loitering event (mean: 0.8112678, median: 0.8823529, 
+range (by vessel and voyage): 0.3111111 to 1).  We outline all matched loitering events
+[here](Loitering Events) and again summarize the matching by vessel and voyage [here](Loitering Events Matched to Observered Transshipment)
+
+##### Intervessel Matching Differences
+As evidence by the range is that some vessels/voyages have better matching than others. 
+In fact it appears that several carrier vessels consistently have poorer matching with
+our current algorithms. `TAISEI MARU NO 15`, `TAISEI MARU NO 24` perform poorly consistently.
+We still need to explore why this is, though there are some possibilities. With [TAISEI MARU NO 24](TAISEI MARU NO 24) and
+[TAISEI MARU NO 15](TAISEI MARU NO 15) shown here.
+
+  1. these vessels conduct transshipments in a different manner which requires different rules  
+  2. with regards to encounters, these vessels may operate with fishing vessels that do not 
+  use AIS or turn it off during transshipment.  
+  3. these vessels tend to operate in regions where AIS reception is lower and thus it is
+  harder to detect events because of reception issues/gaps.  
+
+##### Matching "Precison"
+While many actual transshipments were not identified by encounters, we found that 
+when an encounters was identified it often corresponded to an actual transshipment 
+(mean: 0.6867656, median: 0.7, range: 0.3571 to 1). Thus encounters have limited recall,
+but are relatively precise. The limited number of actual encounters makes the 
+comparison a bit tentative. [Here](Number of Encounter Events matched out of all Encounter Events) 
+
+A similar analysis was done for loitering events, but is a bit more complicated as
+a single loitering event may match multiple transshipment events. Thus the number of matches
+may exceed the number of loitering events, though not all loitering events may have a match.  
+
+<br>
+
+### Analysis
+
+
+```{r, message=FALSE, comment=FALSE, warning=FALSE}
+library(bigrquery)
+library(tidyverse)
+library(sf)
+library(knitr)
+library(extrafont)
+library(DT)
+
+BQ_connection <-  dbConnect(bigquery(), project = "world-fishing-827", use_legacy_sql = FALSE)
+```
+
+
+Load the ICCAT observer data from 2017 - 2018
+```{r, message=FALSE, warning=FALSE, comment=FALSE}
+### Load in the ICCAT Observer data
+
+iccat_obs_data_2017_2018 <- readr::read_csv('../../../../GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv')
+```
+
+
+
+```{r}
+# function that takes a lat or lon specified in degree minutes or degree, minutes, seconds
+# and converts to decimal degrees
+to_dec_degrees <- function(location_string) {
+  split_loc <- unlist(stringr::str_split(location_string, ","))
+  if (length(split_loc) == 3) {
+    as.numeric(split_loc[1]) + as.numeric(split_loc[2]) / 60 + as.numeric(split_loc[3]) / 3600
+  } else if (length(split_loc) == 2) {
+    as.numeric(split_loc[1]) + as.numeric(split_loc[2]) / 60
+  } else {
+    as.numeric(location_string)
+  }
+}
+
+```
+
+
+Process and clean-up the ICCAT data
+```{r}
+iccat_obs_data_processed_2017_2018 <- iccat_obs_data_2017_2018 %>%
+  # if date is NA we don't want the record
+  filter(!(is.na(date))) %>%
+  # clean up the lat/lon degrees
+  mutate(
+    lat = stringr::str_replace(string = lat, pattern = "°|º", replacement = ","),
+    lon = stringr::str_replace(string = lon, pattern = "°|º", replacement = ",")
+  ) %>%
+  rowwise() %>%
+  # fix situations where year is 2 or 4 digits and then format date
+  mutate(
+    day = unlist(str_split(date, "/"))[1],
+    month = unlist(str_split(date, "/"))[2],
+    year = unlist(str_split(date, "/"))[3],
+    date = ifelse(nchar(year) < 4,
+      paste0(day, "/", month, "/20", year),
+      paste0(day, "/", month, "/", year)
+    ),
+    date = as.Date(date, format = "%d/%m/%Y"),
+    # extract N,S,E,W and the lat/lon in degree minutes
+    lat_loc = stringr::str_sub(lat, stringr::str_length(lat), stringr::str_length(lat)),
+    lon_loc = stringr::str_sub(lon, stringr::str_length(lon), stringr::str_length(lon)),
+    lat = trimws(stringr::str_sub(lat, 1, stringr::str_length(lat) - 1)),
+    lon = trimws(stringr::str_sub(lon, 1, stringr::str_length(lon) - 1)),
+    # remove any trailing "’"
+    lat = gsub("(.*)[',’, ́]$", "\\1", lat),
+    lon = gsub("(.*)[',’, ́]$", "\\1", lon),
+    # replace any remaning '’' with comma
+    lat = stringr::str_replace(string = lat, pattern = "’", replacement = ","),
+    lon = stringr::str_replace(string = lon, pattern = "’", replacement = ","),
+    # replace any remaining spaces with ","
+    lat = stringr::str_replace(string = lat, pattern = " ", replacement = ","),
+    lon = stringr::str_replace(string = lon, pattern = " ", replacement = ","),
+    # apply function to convert to decimal degrees
+    lat = to_dec_degrees(lat),
+    lon = to_dec_degrees(lon),
+    #   lat_degree = as.numeric(unlist(stringr::str_split(lat, ','))[1]),
+    #   lat_minutes = as.numeric(unlist(stringr::str_split(lat, ','))[2]),
+    #   lon_degree = as.numeric(unlist(stringr::str_split(lon, ','))[1]),
+    #   lon_minutes = as.numeric(unlist(stringr::str_split(lon, ','))[2]),
+    # convert to decimal degrees and specify appropriate sign
+    #   lat = lat_degree + lat_minutes/60,
+    #   lon = lon_degree + lon_minutes/60,
+    lat = ifelse(lat_loc == "S", lat * -1, lat),
+    lon = ifelse(lon_loc == "W", lon * -1, lon)
+  ) %>%
+  mutate(
+    total_tonnage_obs_transshipped = ifelse(weight_units == "kilograms",
+      total_tonnage_obs_transshipped / 1000,
+      total_tonnage_obs_transshipped
+    ),
+    bigeye_obs_transshipped = ifelse(weight_units == "kilograms",
+      bigeye_obs_transshipped / 1000,
+      bigeye_obs_transshipped
+    ),
+    yellowfin_obs_transshiped = ifelse(weight_units == "kilograms",
+      yellowfin_obs_transshiped / 1000,
+      yellowfin_obs_transshiped
+    ),
+    swordfish_obs_transshipped = ifelse(weight_units == "kilograms",
+      swordfish_obs_transshipped / 1000,
+      swordfish_obs_transshipped
+    ),
+    SBF_obs_transshipped = ifelse(weight_units == "kilograms",
+      SBF_obs_transshipped / 1000,
+      SBF_obs_transshipped
+    ),
+    other_obs_transshipped = ifelse(weight_units == "kilograms",
+      other_obs_transshipped / 1000,
+      other_obs_transshipped
+    )
+  )
+```
+
+Filter for transshipment events that involved the transshipment of fish and add 
+some vessel metadata.
+```{r}
+iccat_obs_fish_2017_2018 <- iccat_obs_data_processed_2017_2018 %>%
+  filter(transshipped_fish == TRUE) %>%
+  rowwise() %>%
+  mutate(
+    hour = unlist(stringr::str_split(time, ":"))[1],
+    minutes = unlist(stringr::str_split(time, ":"))[2],
+    time_min = as.numeric(hour) * 60 + as.numeric(minutes)
+  ) %>%
+  ungroup() %>%
+  dplyr::select(-c(time, hour, minutes))
+
+
+iccat_voyage_limits <- tibble(
+  vessel = c(
+    "GENTA MARU", "TAISEI MARU NO 24",
+    "FUTAGAMI", "IBUKI", "MEITA MARU",
+    "TAISEI MARU NO 15", "CHIKUMA", "GENTA MARU",
+    "LADY TUNA", "SHOTA MARU", "TAISEI MARU NO 24",
+    "MEITA MARU", "VICTORIA 2", "IBUKI",
+    "TAISEI MARU NO 15", "TAISEI MARU NO 24",
+    "GENTA MARU", "TAISEI MARU NO 15"
+  ),
+  voyage_start = c(
+    "2017-08-18", "2017-10-05",
+    "2017-10-28", "2017-11-15", "2017-11-14",
+    "2017-12-01", "2018-02-01", "2018-01-14",
+    "2018-02-22", "2018-03-12", "2018-03-30",
+    "2018-04-18", "2018-04-30", "2018-05-27",
+    "2018-06-12", "2018-06-15",
+    "2018-07-06", "2018-08-10"
+  ),
+  voyage_end = c(
+    "2017-09-19", "2017-12-14",
+    "2017-12-20", "2018-01-19", "2017-12-20",
+    "2018-02-10", "2018-05-05", "2018-03-25",
+    "2018-05-26", "2018-04-23", "2018-06-11",
+    "2018-06-09", "2018-06-03", "2018-07-24",
+    "2018-08-09", "2018-07-16",
+    "2018-08-07", "2018-09-03"
+  ),
+  voyage = seq(1, 18)
+)
+
+iccat_obs_fish_2017_2018 <- iccat_obs_fish_2017_2018 %>%
+  left_join(iccat_voyage_limits, by = c("vessel" = "vessel", "voyage" = "voyage")) %>%
+  mutate(column_label = paste0(vessel, " ", voyage_start)) %>%
+  dplyr::select(column_label, everything())
+
+```
+
+
+### Relationship between Transshipment Duration and Amount of Fish Transshipped.  
+Relatively linear, but should check out the small transshipment amount that took quite a while.  
+```{r}
+ggplot() +
+  geom_vline(
+    xintercept = c(120, 60 * 8),
+    linetype = "dashed",
+    color = "grey60"
+  ) +
+  geom_point(
+    data = iccat_obs_fish_2017_2018,
+    aes(time_min, total_tonnage_obs_transshipped)
+  ) +
+  scale_x_continuous("Transshipment Duration (min)",
+    breaks = c(seq(0, 840, 120))
+  ) +
+  scale_y_continuous("Total Tonnage Transshipped, Observed (t)",
+    limits = c(0, 225)
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "grey85")
+  )
+
+```
+
+
+#### Relationship is relatively linear adj. R at 0.864
+```{r}
+#all data
+broom::glance(lm(data = iccat_obs_fish_2017_2018, 
+                 total_tonnage_obs_transshipped~time_min ))
+
+```
+
+```{r}
+median(iccat_obs_fish_2017_2018$time_min, na.rm = TRUE)
+```
+
+
+#### Most of the events are short (1.5 - 2.5 hours, median 132.5 minutes)
+```{r}
+ggplot() +
+  geom_density(
+    data = iccat_obs_fish_2017_2018,
+    aes(time_min / 60), fill = "grey95"
+  ) +
+  scale_x_continuous("Transshipment Duration (h)",
+    breaks = c(seq(1, 14, 1))
+  ) +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())
+
+
+ggplot() +
+  geom_histogram(
+    data = iccat_obs_fish_2017_2018,
+    aes(time_min / 60),
+    binwidth = 0.25,
+    dotsize = 0.5,
+    color = "grey65",
+    fill = "grey70"
+  ) +
+  scale_x_continuous("Transshipment Duration (h)",
+    breaks = c(seq(1, 14, 1))
+  ) +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())
+```
+
+### Locations of the Events within the ICCAT
+```{r}
+# required libraries
+library(leaflet)
+# start basemap
+map <- leaflet() %>%
+
+  # add ocean basemap
+  addProviderTiles(providers$CartoDB.DarkMatter) %>%
+
+  # add another layer with place names
+  addProviderTiles(providers$Hydda.RoadsAndLabels, group = "Place names") %>%
+
+  # focus map in a certain area / zoom level
+  setView(lng = -10, lat = -10, zoom = 3) %>%
+
+  # add layers control
+  # addLayersControl(overlayGroups = c('Place names'),
+  #                     options = layersControlOptions(collapsed = FALSE),
+  #                     position = 'topright') %>%
+  #
+  # #     # list groups to hide on startup
+  hideGroup(c("Place names"))
+
+map %>%
+  # mapview::addFeatures(eez_shp,
+  #                     weight = 1, fillColor = NA, color = "grey35",
+  #                    opacity = 0.2, fillOpacity = 0.3) %>%
+  addCircleMarkers(
+    data = iccat_obs_fish_2017_2018, ~lon, ~lat,
+    weight = 0.5,
+    color = "black",
+    # fillColor = 'darkslategrey',
+    fillColor = "yellowgreen",
+    radius = 4,
+    fillOpacity = 0.9,
+    stroke = T,
+    label = ~ paste0(
+      "Point: ",
+      as.character(date), ", ",
+      as.character(vessel)
+    ),
+    group = "Points"
+  )
+    
+```
+
+
+Set of functions to run queries to identify encounters, loitering, and vessel tracks
+along with a plotting/mapping function.
+```{r}
+encounters_query <- function(start_date, end_date) {
+  encounters_q <- "WITH fishing_encounters AS (
+                SELECT 
+                    fishing_vessel,
+                    carrier_vessel,
+                    start_time,
+                    end_time,
+                    mean_latitude,
+                    mean_longitude,
+                    median_distance_km,
+                    median_speed_knots
+                FROM(
+                SELECT
+                    vessel_1_id AS fishing_vessel,
+                    vessel_2_id AS carrier_vessel,
+                    start_time,
+                    end_time,
+                    mean_latitude,
+                    mean_longitude,
+                    median_distance_km,
+                    median_speed_knots
+                FROM
+                    `world-fishing-827.pipe_production_b.encounters`
+                WHERE vessel_1_id in (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE isfishingvessel  ) AND
+                    vessel_2_id IN (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE iscarriervessel ) AND
+                    start_time >= TIMESTAMP('2017-07-30 00:00:00') AND 
+                    end_time <= TIMESTAMP('2018-08-15 00:00:00')
+                    AND median_speed_knots < 2)
+                UNION ALL (
+                SELECT
+                    vessel_2_id AS fishing_vessel,
+                    vessel_1_id AS carrier_vessel,
+                    start_time,
+                    end_time,
+                    mean_latitude,
+                    mean_longitude,
+                    median_distance_km,
+                    median_speed_knots
+                FROM
+                    `world-fishing-827.pipe_production_b.encounters`
+                WHERE vessel_2_id in (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE isfishingvessel ) AND
+                    vessel_1_id IN (SELECT vessel_id FROM `vessel_database.all_vessels_20180927`,
+                    UNNEST(vessel_id_array) vessel_id WHERE iscarriervessel ) AND
+                    start_time >= TIMESTAMP('2017-07-30 00:00:00') AND 
+                    end_time <= TIMESTAMP('2018-08-15 00:00:00')
+                    AND median_speed_knots < 2))
+                    
+                SELECT * FROM fishing_encounters"
+
+  query_exec(encounters_q, project = "world-fishing-827", max_pages = Inf, use_legacy_sql = FALSE)
+}
+
+loitering_query <- function(start_date, end_date) {
+  loitering_q <- glue::glue("SELECT * 
+                FROM 
+                    `world-fishing-827.ICCAT_transshipment.loitering_table2` 
+                WHERE 
+                    --tot_hours > 8 AND
+                    start_timestamp >= '{start_date} 00:00:00' AND
+                    end_timestamp <= '{end_date} 00:00:00'")
+
+  query_exec(loitering_q, project = "world-fishing-827", max_pages = Inf, use_legacy_sql = FALSE)
+}
+
+
+# Run query to get ves
+
+vessel_track_query <- function(mmsi, start_date, end_date) {
+  vessel_track_q <- glue::glue("SELECT
+                    timestamp,
+                    lat,
+                    lon
+                FROM
+                    `gfw_research.pipe_production_b`
+                WHERE _PARTITIONDATE BETWEEN DATE('{start_date}') AND
+                        DATE('{end_date}') AND
+                        ssvid = '{mmsi}' AND
+                        seg_id in (SELECT seg_id 
+                                FROM 
+                                `gfw_research.pipe_production_b_segs` 
+                                WHERE good_seg)
+                order by timestamp")
+
+  query_exec(vessel_track_q, project = "world-fishing-827", max_pages = Inf, use_legacy_sql = FALSE)
+}
+
+
+shp_list <- list(
+  land_sf = "../../../../GlobalFishingWatch/shapefiles/ne_10m_admin_0_countries/ne_10m_admin_0_countries_polygons/ne_10m_admin_0_countries.shp",
+  eez_sf = "../../../../GlobalFishingWatch/shapefiles/World_EEZ_v8_20140228_LR/World_EEZ_v8_2014.shp"
+)
+
+
+
+#### Plotting function
+
+iccat_events_plotting <- function(mmsi, vessel_id, vessel_name, start_date, end_date, iccat_data,
+                                  encounters_data, loitering_data, vessel_track_data, shp_list) {
+
+  # plotting defaults
+  loitering_point_size <- 0.7
+  loitering_line_size <- 0.5
+  loitering_point_color <- "orange"
+  encounter_point_size <- 2
+  encounter_point_color <- "#72C769"
+  observed_transshipment_size <- 4
+  observed_supply_size <- 4
+
+  vessel_id_qou <- rlang::enquo(vessel_id)
+  mmsi_quo <- rlang::enquo(mmsi)
+  vessel_name_quo <- rlang::enquo(vessel_name)
+  start_quo <- rlang::enquo(start_date)
+  end_quo <- rlang::enquo(end_date)
+
+  # load shapefiles
+  shp_files <- purrr::map(shp_list, sf::read_sf)
+
+  # extract vessel specific events
+  encounters <- encounters_data %>%
+    filter(carrier_vessel %in% !!vessel_id &
+      start_time >= as.POSIXct(toString(!!start_date)) &
+      end_time <= as.POSIXct(toString(!!end_date))) %>%
+    mutate(
+      carrier_mmsi = rep(mmsi, nrow(.)),
+      enc_duration_hr = as.numeric(difftime(end_time, start_time,
+        tz = "UTC",
+        units = "hours"
+      ))
+    )
+  
+  #print(nrow(encounters))
+  
+  if (nrow(encounters) < 1) {
+    encounters <- encounters %>% 
+      add_row()
+  }
+
+  transhipment <- iccat_data %>%
+    filter(vessel == !!vessel_name &
+      date >= as.Date(!!start_date) &
+      date <= as.Date(!!end_date)) %>%
+    mutate(
+      carrier_mmsi = rep(mmsi, nrow(.)),
+      obs_duration_hr = time_min / 60
+    )
+  
+    #print(nrow(transhipment))
+
+  
+  if (nrow(transhipment) < 1) {
+    transhipment <- transhipment %>% 
+      add_row()
+  }
+
+  loitering <- loitering_data %>%
+    filter(mmsi == !!mmsi &
+      start_timestamp >= as.POSIXct(toString(!!start_date)) &
+      end_timestamp <= as.POSIXct(toString(!!end_date))) %>%
+    dplyr::rename(carrier_mmsi = mmsi)
+  
+    # print(nrow(loitering))
+  
+  if (nrow(loitering) < 1) {
+    loitering <- loitering %>% 
+      add_row()
+  }
+  # pretty title date range
+  title_date_range <- glue::glue("({format(as.Date(start_date), '%b %Y')} - {format(as.Date(end_date), '%b %Y')})")
+
+  max_lat <- max(c(encounters$mean_latitude, loitering$start_lat, 
+                 loitering$end_lat,transhipment$lat, vessel_track_data$lat ), 
+                 na.rm = TRUE) + 1
+  min_lat <- min(c(encounters$mean_latitude, loitering$start_lat, 
+                 loitering$end_lat,transhipment$lat, vessel_track_data$lat ), 
+                 na.rm = TRUE) - 1
+  max_lon <- max(c(encounters$mean_longitude, loitering$start_lon, 
+                 loitering$end_lon,transhipment$lon, vessel_track_data$lon ), 
+                 na.rm = TRUE) + 1
+  #keep maps from showing voyage to Singapore
+  max_lon <- ifelse(max_lon > 25, 25, max_lon)
+  
+  min_lon <- min(c(encounters$mean_longitude, loitering$start_lon, 
+                 loitering$end_lon, transhipment$lon, vessel_track_data$lon ),
+                 na.rm = TRUE) - 1
+  
+  
+  # make the plot
+  p1 <- ggplot() +
+    geom_sf(
+      data = shp_files[["land_sf"]],
+      size = 0.3,
+      fill = "grey90",
+      color = "grey85"
+    ) +
+    geom_sf(
+      data = shp_files[["eez_sf"]],
+      size = 0.3,
+      fill = NA,
+      color = "grey95"
+    ) +
+    geom_path(
+      data = vessel_track_data,
+      aes(lon,
+        lat,
+        color = "Vessel Track"
+      )
+    ) +
+    geom_point(
+      data = vessel_track_data,
+      aes(lon,
+        lat,
+        color = "AIS Position"
+      ),
+      size = 0.3,
+      alpha = 0.1
+    ) +
+    #geom_point( data = shota_maru_supply_transship_1, 
+    #aes(lon, lat, 
+    #color = 'Observed Supply'), 
+    #shape = 21, 
+    #fill = NA, 
+    #size = observed_supply_size) +
+    geom_point(
+      data = transhipment,
+      aes(lon,
+        lat,
+        color = "Observed Fish Transshipment"
+      ),
+      shape = 21,
+      fill = NA,
+      size = observed_transshipment_size
+    ) +
+    geom_segment(
+      data = loitering,
+      aes(
+        x = start_lon,
+        y = start_lat,
+        xend = end_lon,
+        yend = end_lat,
+        color = "Loitering Period"
+      ),
+      size = loitering_line_size
+    ) +
+    geom_point(
+      data = loitering,
+      aes(
+        x = start_lon,
+        y = start_lat,
+        color = "Loitering Period"
+      ),
+      size = loitering_point_size
+    ) +
+    geom_point(
+      data = encounters,
+      aes(mean_longitude,
+        mean_latitude,
+        color = "Detected Encounter"
+      ),
+      size = encounter_point_size
+    ) +
+    scale_color_manual("", values = c(
+      "Observed Fish Transshipment" = "red",
+      "Detected Encounter" = encounter_point_color,
+      "Loitering Period" = loitering_point_color,
+      "AIS Position" = "#2A186C",
+      "Vessel Track" = "grey70",
+      "Observed Supply" = "#2A186C"
+    )) +
+    coord_sf(xlim = c(min_lon, max_lon), ylim = c(min_lat, max_lat)) +
+    guides(color = guide_legend(
+      override.aes = list(
+        shape = c(19, 19, 21, 21, NA),
+        linetype = c("blank", "blank", "blank", "blank", "solid"),
+        fill = c(NA, "white", "white", "white", NA)
+      )
+    )) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(family = "Roboto", face = "bold"),
+      plot.subtitle = element_text(family = "Roboto"),
+      axis.text = element_text(family = "Roboto"),
+      axis.title = element_text(family = "Roboto")
+    ) +
+    xlab("Longitude") +
+    ylab("Latitude") +
+    labs(title = vessel_name, subtitle = title_date_range)
+
+  # output list of plots and dataframes
+
+  list(
+    voyage_plot = p1,
+    reported_transshipment = transhipment,
+    encounters = encounters,
+    loitering = loitering
+  )
+}
+```
+
+```{r}
+vessel_identity <- tibble(
+  callsign = c(
+    "D5JO9", "JILE", "D5KG4", "3ELC8",
+    "D5JO8", "7JTK", "D5JI4", "3EQX2",
+    "D5KN7", "D5KD3"
+  ),
+  mmsi = c(
+    636017162, 431678000, 636017301,
+    370599000, 636017161, 431201000, 636017108,
+    374762000, 636017359, 636017275
+  ),
+  vessel_id = list(
+    "1a2575ce1-1a29-7e70-239a-516a9cdfaa75",
+    c(
+      "ee8cdf465-532d-ffd0-21d1-bea9e605ea8d",
+      "a059261f7-7d20-372d-1269-ed4409dcda66"
+    ),
+    "d5926db30-058b-74b6-5e63-0bbc336cbde1",
+    "901bf1ab6-6ca9-8e0e-22bd-4d576a8a3ddc",
+    "06239387d-d13f-b439-0770-78afc6197d47",
+    "3a165ab38-8e2a-2c45-3f10-2228622f68e2",
+    "b27a8b734-4bf1-fd67-4e05-eb6ef673090b",
+    "5c95c67b7-742d-6a12-7308-bb5ba780e41a",
+    "401b15cef-fd3a-5ca0-4ca0-3747ec064864",
+    "2a4ab224e-e118-4546-cf42-0b58585555ac"
+  )
+)
+
+iccat_reefer_ids <- iccat_obs_fish_2017_2018 %>%
+  select(vessel, callsign) %>%
+  distinct(vessel, callsign) %>%
+  left_join(vessel_identity, by = "callsign") %>% # above
+  left_join(iccat_voyage_limits, by = "vessel") # from beginning
+
+
+widgetframe::frameWidget(DT::datatable(iccat_reefer_ids, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5,
+                                                      lengthMenu = c(5, 10, 15, 20))) %>%
+                           DT::formatStyle(colnames(iccat_reefer_ids), fontSize = '65%'),
+                         height = 450, width = '100%')
+```
+
+#### Run the query functions to get events and vessel track data
+```{r, cache = TRUE, message=FALSE, warning=FALSE, comment=FALSE}
+# all events for relevant time range
+loitering_data <- loitering_query("2017-08-01", "2018-08-01")
+fishing_encounters_2017_2018 <- encounters_query("2017-08-01", "2018-08-01")
+
+# vessel track queries... only run once as they are large
+vessel_track_data <- purrr::set_names(purrr::pmap(
+  .l = list(
+    mmsi = iccat_reefer_ids$mmsi,
+    start_date = iccat_reefer_ids$voyage_start,
+    end_date = iccat_reefer_ids$voyage_end
+  ),
+  .f = vessel_track_query
+), iccat_reefer_ids$vessel)
+
+```
+
+
+```{r}
+# loop through all the vessels and generate plots as long as the
+# vessel track data is available in a list
+
+iccat_2017_2018_events <- purrr::set_names(purrr::pmap(
+  .l = list(
+    mmsi = iccat_reefer_ids$mmsi,
+    vessel_id = iccat_reefer_ids$vessel_id,
+    vessel_name = iccat_reefer_ids$vessel,
+    start_date = iccat_reefer_ids$voyage_start,
+    end_date = iccat_reefer_ids$voyage_end,
+    vessel_track_data = vessel_track_data
+  ),
+  .f = iccat_events_plotting,
+  iccat_data = iccat_obs_fish_2017_2018,
+  encounters_data = fishing_encounters_2017_2018,
+  loitering_data = loitering_data,
+  shp_list = shp_list
+), paste0(iccat_reefer_ids$vessel, " ", iccat_reefer_ids$voyage_start))
+```
+
+## How well do we identify real events?
+
+A set of functions for matching encounters and loitering events
+```{r}
+ gc_distance <- function(start_lon, start_lat, end_lon, end_lat, lon, lat, match_distance) {
+
+  # function to identify intermediate points on a great circle between
+  # two end points, and then identify the minimum distance between
+  # these points and separate point.
+
+  # currently useful for identifying points near a particular segment
+  # of a great circle path. geosphere::dist2gc() does something similar
+  # but points can be anywhere on the great circle
+
+  # note uses straight-line loitering path... if path is curvilinear
+  # this may not work well.
+
+  # Use:
+  # gc_distance(100, 0, 150, 0, 125, 1, 5)
+
+  R <- 6378.137 # (earth radius in km)
+
+  if (!(is.na(start_lon))) {
+    # straight-line length of loitering event
+    loiter_distance <- geosphere::distHaversine(
+      p1 = c(start_lon, start_lat),
+      p2 = c(end_lon, end_lat),
+      r = R
+    )
+    # number of points so 2.5km appart
+    n <- loiter_distance / (match_distance / 2)
+
+    loitering_pnts <- geosphere::gcIntermediate(
+      p1 = c(start_lon, start_lat),
+      p2 = c(end_lon, end_lat),
+      n = n
+    )
+
+    dist <- geosphere::distHaversine(
+      p1 = loitering_pnts,
+      p2 = c(lon, lat),
+      r = R
+    )
+
+    min_dist_km <- min(dist)
+    min_dist_km
+  } else {
+    min_dist_km <- NA
+    min_dist_km
+  }
+}
+
+
+# function to wrap Haversine distance calculate for use with purrr
+calc_dist_km <- function(mean_longitude, mean_latitude, lon, lat) {
+  p1 <- c(mean_longitude, mean_latitude)
+  p2 <- c(lon, lat)
+  r <- 6378.137
+
+  distance <- geosphere::distHaversine(p1, p2, r)
+  distance
+}
+
+
+```
+
+
+#### Matching encounters and loitering to observed fish transshipments
+
+Function to match encounters
+```{r, echo = TRUE}
+#encounters
+encounters_matches <- function(obs_transshipments, encounters_data, match_distance = 10) {
+  matches <- encounters_data %>%
+    mutate(
+      start_range1 = as.Date(start_time - lubridate::hours(12)),
+      end_range1 = as.Date(end_time + lubridate::hours(12))
+    ) %>%
+    fuzzyjoin::fuzzy_left_join(obs_transshipments,
+      by = c(
+        "start_range1" = "date",
+        "end_range1" = "date"
+      ),
+      match_fun = list(`<=`, `>=`)
+    ) %>%
+    mutate(distance = purrr::pmap_dbl(
+      .l = list(
+        mean_longitude,
+        mean_latitude,
+        lon,
+        lat
+      ),
+      .f = calc_dist_km
+    )) %>%
+    group_by(start_time, end_time, mean_latitude, mean_longitude, enc_duration_hr) %>%
+    mutate(min_dist = min(distance)) %>%
+    filter(distance == min_dist | is.na(date)) %>%
+    mutate(obs_duration_hr = time_min / 60) %>%
+    dplyr::select(
+      carrier_mmsi.x, fishing_vessel, start_time, end_time, mean_latitude, mean_longitude,
+      enc_duration_hr, date, lat, lon, vessel, transshipped_fish,
+      total_tonnage_obs_transshipped, obs_duration_hr, min_dist
+    ) %>%
+    rename(
+      carrier_mmsi = carrier_mmsi.x, enc_start = start_time, 
+      enc_end = end_time, enc_latitude = mean_latitude,
+      enc_longitude = mean_longitude, enc_duration_hr = enc_duration_hr,
+      trans_date = date, trans_lat = lat, trans_lon = lon,
+      trans_fish = transshipped_fish, tot_ton_trans = total_tonnage_obs_transshipped,
+      obs_duration_hr = obs_duration_hr, min_dist = min_dist
+    ) %>%
+    mutate(match = ifelse(min_dist > match_distance | is.na(min_dist), FALSE, TRUE)) %>%
+    dplyr::select(match, everything())
+
+  matches
+}
+```
+
+
+
+
+```{r, echo = FALSE}
+# calc_dist_km <- function(mean_longitude, mean_latitude, lon, lat) {
+#     p1 = c(mean_longitude, mean_latitude)
+#     p2 = c(lon, lat)
+#     r = 6378.137
+#     
+#     distance = geosphere::distHaversine(p1, p2, r)
+#     distance
+# }
+# 
+# # result <- distm(ibuki_1[ , c(3, 2)],ibuki_encounters_1[ , c(4, 3)], fun = distHaversine)
+# # apply(result,2,min)
+# # 
+# # result <- distm(ibuki_1[ , c(3, 2)],ibuki_loitering_1[ , c(2, 1)], fun = distHaversine)
+# # apply(result,2,min)
+# 
+# 
+# 
+# #encounters
+# encounters_matches <- function(obs_transshipments, encounters_data, match_distance = 10) {
+#     
+#     matches <- encounters_data %>%
+#         mutate(start_range1 = as.Date(start_time - lubridate::hours(12)),
+#                end_range1 = as.Date(end_time + lubridate::hours(12))) %>%
+#         fuzzyjoin::fuzzy_left_join(obs_transshipments, by = c("start_range1" = "date", 
+#                                         "end_range1" = "date"), match_fun = list(`<=`, `>=`) ) %>%
+#         mutate(distance = purrr::pmap_dbl(.l = list(mean_longitude, mean_latitude, lon, lat), .f = calc_dist_km)) %>%
+#         group_by(start_time, end_time,mean_latitude, mean_longitude,enc_duration_hr) %>%
+#         mutate(min_dist = min(distance)) %>%
+#         filter(distance == min_dist | is.na(date)) %>%
+#         mutate(obs_duration_hr = time_min/60) %>%
+#         dplyr::select(carrier_mmsi.x, fishing_vessel, start_time, end_time, mean_latitude, mean_longitude,
+#                enc_duration_hr, date, lat, lon, vessel, transshipped_fish,
+#                total_tonnage_obs_transshipped, obs_duration_hr, min_dist) %>%
+#         rename( carrier_mmsi = carrier_mmsi.x, enc_start = start_time, enc_end = end_time, enc_latitude = mean_latitude,
+#                 enc_longitude = mean_longitude, enc_duration_hr = enc_duration_hr,
+#                 trans_date = date, trans_lat = lat, trans_lon = lon,
+#                 trans_fish = transshipped_fish, tot_ton_trans = total_tonnage_obs_transshipped,
+#                 obs_duration_hr = obs_duration_hr, min_dist = min_dist) %>%
+#         mutate(match = ifelse(min_dist > match_distance | is.na(min_dist), FALSE, TRUE)) %>%
+#         dplyr::select(match, everything())
+# 
+#     fraction_matched = sum(matches$match)/nrow(matches)
+#     results <- list(match_df = matches, frac_match = fraction_matched)
+#     results
+# }
+```
+
+
+### How many of the observed events are matched to a loitering event
+Function to match loitering events
+```{r}
+# loitering
+loitering_matches <- function(obs_transshipments, loitering_data, match_distance = 5) {
+  matches <- loitering_data %>%
+    mutate(
+      start_range1 = as.Date(start_timestamp - lubridate::hours(12)),
+      end_range1 = as.Date(end_timestamp + lubridate::hours(12))
+    ) %>%
+    fuzzyjoin::fuzzy_left_join(obs_transshipments, by = c(
+      "start_range1" = "date",
+      "end_range1" = "date"
+    ), match_fun = list(`<=`, `>=`)) %>%
+    mutate(min_dist = purrr::pmap_dbl(
+      .l = list(
+        start_lon,
+        start_lat,
+        end_lon,
+        end_lat,
+        lon,
+        lat
+      ),
+      .f = gc_distance,
+      match_distance
+    )) %>%
+    group_by(start_timestamp, end_timestamp, start_lat, start_lon, tot_hours) %>%
+    mutate(obs_duration_hr = time_min / 60) %>%
+    dplyr::select(
+      start_timestamp, end_timestamp, start_lat,
+      start_lon, end_lat, end_lon, tot_hours, date,
+      lat, lon, vessel, total_tonnage_obs_transshipped, obs_duration_hr,
+      min_dist
+    ) %>%
+    rename(
+      loit_start = start_timestamp, loit_end = end_timestamp,
+      loit_start_latitude = start_lat, loit_start_longitude = start_lon,
+      loit_end_latitude = end_lat, loit_end_longitude = end_lon,
+      loit_duration_hr = tot_hours, trans_date = date,
+      trans_lat = lat, trans_lon = lon,
+      tot_ton_trans = total_tonnage_obs_transshipped,
+      obs_duration_hr = obs_duration_hr, min_dist = min_dist
+    ) %>%
+    mutate(match = ifelse(min_dist > match_distance |is.na(min_dist), FALSE, TRUE)) %>%
+    dplyr::select(match, everything())
+
+  # fraction_matched = sum(matches$match)/nrow(matches)
+  # results <- list(match_df = matches, frac_match = fraction_matched)
+  matches
+}
+```
+
+
+```{r, echo = FALSE}
+# 
+# # loitering
+# loitering_matches <- function(obs_transshipments, loitering_data, match_distance = 5) {
+# 
+#     mean_two_col <- function(start, end) {
+#         mean_val = mean(c(start, end))
+#         mean_val
+#     }
+#     
+#     matches <- loitering_data %>%
+#         mutate(start_range1 = as.Date(start_timestamp - lubridate::hours(12)),
+#                end_range1 = as.Date(end_timestamp + lubridate::hours(12))) %>%
+#         fuzzyjoin::fuzzy_left_join(obs_transshipments, by = c("start_range1" = "date", 
+#                                         "end_range1" = "date"), match_fun = list(`<=`, `>=`) ) %>%
+#         mutate(mean_lat = purrr::pmap_dbl(.l = list(start_lat,end_lat), .f = mean_two_col), 
+#                mean_lon = purrr::pmap_dbl(.l = list(start_lon,end_lon), .f = mean_two_col),
+#                distance_to_start = purrr::pmap_dbl(.l = list(start_lon, start_lat, lon, lat), .f = calc_dist_km),
+#                distance_to_end = purrr::pmap_dbl(.l = list(end_lon, end_lat, lon, lat), .f = calc_dist_km),
+#                distance_to_mean = purrr::pmap_dbl(.l = list(mean_lon, mean_lat, lon, lat), .f = calc_dist_km)) %>%
+#         group_by(start_timestamp, end_timestamp, start_lat, start_lon, tot_hours) %>%
+#         mutate(min_dist = min(distance_to_start, distance_to_end, distance_to_mean)) %>%
+#         filter(distance_to_start == min_dist | 
+#                    distance_to_end == min_dist | 
+#                    distance_to_mean == min_dist) %>%
+#         mutate(obs_duration_hr = time_min/60) %>%
+#         dplyr::select(start_timestamp, end_timestamp, start_lat, 
+#                start_lon, end_lat, end_lon, tot_hours, date, 
+#                lat, lon, vessel, total_tonnage_obs_transshipped, obs_duration_hr,
+#                min_dist) %>%
+#         rename( loit_start = start_timestamp, loit_end = end_timestamp, 
+#                 loit_start_latitude = start_lat, loit_start_longitude = start_lon, 
+#                 loit_end_latitude = end_lat, loit_end_longitude = end_lon, 
+#                 loit_duration_hr = tot_hours, trans_date = date,
+#                 trans_lat = lat, trans_lon = lon, 
+#                 tot_ton_trans = total_tonnage_obs_transshipped,obs_duration_hr = obs_duration_hr, min_dist = min_dist) %>%
+#         mutate(match = ifelse(min_dist > match_distance | is.na(min_dist), FALSE, TRUE)) %>%
+#         dplyr::select(match, everything())
+#     
+#     
+#     fraction_matched = sum(matches$match)/nrow(matches)
+#     results <- list(match_df = matches, frac_match = fraction_matched)
+#     results
+# }
+```
+
+
+```{r, echo = FALSE}
+# 
+# match_obs_encounters <- function(obs_transshipments, encounters_data, match_distance = 10) {
+# 
+#     encounters_data <- encounters_data %>%
+#         mutate(start_range1 = as.Date(start_time - lubridate::hours(12)),
+#                end_range1 = as.Date(end_time + lubridate::hours(12)))
+# 
+#     matches <- obs_transshipments %>%
+#         dplyr::arrange(date) %>%
+#         mutate(event_num = c(seq(1, nrow(obs_transshipments)))) %>%
+#         fuzzyjoin::fuzzy_left_join(encounters_data, 
+#                         by = c("date" = "start_range1", 
+#                                "date" = "end_range1"), 
+#                         match_fun = list(`>=`, `<=`) ) %>%
+#       mutate(distance = purrr::pmap_dbl(.l = list(mean_longitude, 
+#                                                   mean_latitude, 
+#                                                   lon,
+#                                                   lat), 
+#                                           .f = calc_dist_km)) %>%
+#         group_by(event_num) %>%
+#         mutate(min_dist = min(distance)) %>%
+#         filter(distance == min_dist | is.na(min_dist)) %>%
+#         dplyr::select(event_num, carrier_mmsi.x, fishing_vessel,
+#                       start_time, end_time, mean_latitude, mean_longitude, 
+#                       enc_duration_hr, date, lat, lon, vessel, 
+#                       transshipped_fish, obs_duration_hr, 
+#                       total_tonnage_obs_transshipped, min_dist) %>%
+#         rename( carrier_mmsi = carrier_mmsi.x,enc_start = start_time, 
+#                 enc_end = end_time,  enc_latitude = mean_latitude, 
+#                 enc_longitude = mean_longitude,  enc_duration_hr = enc_duration_hr, 
+#                 trans_date = date,trans_lat = lat, trans_lon = lon,
+#                 trans_fish = transshipped_fish, 
+#                 tot_ton_trans = total_tonnage_obs_transshipped,
+#                 obs_duration_hr = obs_duration_hr, min_dist = min_dist) %>%
+#         mutate(match = ifelse(min_dist > match_distance | is.na(min_dist), FALSE, TRUE)) %>%
+#         dplyr::select(match, everything())
+#     
+#     # frac_match <- sum(matches$match)/nrow(matches)
+#     # results <- list(match_df = matches, fraction_matched = frac_match)
+#     matches
+# }
+```
+
+
+
+
+```{r, echo = FALSE}
+# 
+# match_obs_encounters <- function(obs_transshipments, encounters_data, match_distance = 10) {
+# 
+#     encounters_data <- encounters_data %>%
+#         mutate(start_range1 = as.Date(start_time - lubridate::hours(12)),
+#                end_range1 = as.Date(end_time + lubridate::hours(12)))
+# 
+#     matches <- obs_transshipments %>%
+#         dplyr::arrange(date) %>%
+#         mutate(event_num = c(seq(1, nrow(obs_transshipments)))) %>%
+#         fuzzyjoin::fuzzy_left_join(encounters_data, 
+#                         by = c("date" = "start_range1", 
+#                                "date" = "end_range1"), 
+#                         match_fun = list(`>=`, `<=`) ) %>%
+#         mutate(distance = purrr::pmap_dbl(.l = list(mean_longitude, mean_latitude, lon, lat), 
+#                                           .f = calc_dist_km)) %>%
+#         group_by(event_num) %>%
+#         mutate(min_dist = min(distance)) %>%
+#         filter(distance == min_dist | is.na(min_dist)) %>%
+#         dplyr::select(event_num, carrier_mmsi.x, fishing_vessel,
+#                       start_time, end_time, mean_latitude, mean_longitude, 
+#                       enc_duration_hr, date, lat, lon, vessel, transshipped_fish, obs_duration_hr, 
+#                       total_tonnage_obs_transshipped, min_dist) %>%
+#         rename( carrier_mmsi = carrier_mmsi.x,enc_start = start_time, enc_end = end_time, 
+#                 enc_latitude = mean_latitude, enc_longitude = mean_longitude, 
+#                 enc_duration_hr = enc_duration_hr, trans_date = date,
+#                 trans_lat = lat, trans_lon = lon,trans_fish = transshipped_fish, 
+#                 tot_ton_trans = total_tonnage_obs_transshipped, obs_duration_hr = obs_duration_hr, min_dist = min_dist) %>%
+#         mutate(match = ifelse(min_dist > 10 | is.na(min_dist), FALSE, TRUE)) %>%
+#         dplyr::select(match, everything())
+#     
+#     frac_match <- sum(matches$match)/nrow(matches)
+#     results <- list(match_df = matches, fraction_matched = frac_match)
+# }
+```
+
+
+```{r, echo = FALSE}
+# match_obs_loitering <- function(obs_transshipments, loitering_data, match_distance = 5) {
+# 
+#     loitering_data <- loitering_data %>%
+#         mutate(start_range1 = as.Date(start_timestamp - lubridate::hours(12)),
+#                end_range1 = as.Date(end_timestamp + lubridate::hours(12)))
+#     
+#     matches <- obs_transshipments %>%
+#         dplyr::mutate(event_num = seq(1, nrow(obs_transshipments))) %>%
+#         fuzzyjoin::fuzzy_left_join(loitering_data, 
+#                         by = c("date" = "start_range1", 
+#                                "date" = "end_range1"), 
+#                          match_fun = list(`>=`, `<=`) )  %>%
+#         dplyr::mutate(min_dist = purrr::pmap_dbl(.l = list(start_lon,
+#                                               start_lat,
+#                                               end_lon,
+#                                               end_lat,
+#                                               lon,
+#                                               lat),
+#                                     .f = gc_distance,
+#                                     match_distance)) %>%
+#         dplyr::group_by(event_num)  %>%
+#         dplyr::mutate(obs_duration_hr = time_min/60) %>%
+#         dplyr::select(start_timestamp, end_timestamp, start_lat, start_lon,
+#                end_lat, end_lon, tot_hours, date, lat, lon, vessel, obs_duration_hr,
+#                total_tonnage_obs_transshipped, min_dist) %>%
+#         rename( loit_start = start_timestamp, loit_end = end_timestamp,
+#                 loit_start_latitude = start_lat, loit_start_longitude = start_lon,
+#                 loit_end_latitude = end_lat, loit_end_longitude = end_lon,
+#                 loit_duration_hr = tot_hours, trans_date = date,
+#                 trans_lat = lat, trans_lon = lon,
+#                 tot_ton_trans = total_tonnage_obs_transshipped,
+#                 obs_duration_hr = obs_duration_hr, min_dist = min_dist) %>%
+#         mutate(match = ifelse(min_dist > match_distance | is.na(min_dist), FALSE, TRUE)) %>%
+#         dplyr::select(match, everything())
+#     
+#     # frac_match <- sum(matches$match)/nrow(matches)
+#     # results <- list(match_df = matches, fraction_matched = frac_match)
+#     # results
+#     matches
+# }
+```
+
+
+```{r, echo = FALSE}
+# match_obs_loitering <- function(obs_transshipments, loitering_data, match_distance = 10) {
+# 
+#     mean_two_col <- function(start, end) {
+#         mean_val = mean(c(start, end))
+#         mean_val
+#     }
+#     
+#     loitering_data <- loitering_data %>%
+#         mutate(start_range1 = as.Date(start_timestamp - lubridate::hours(12)),
+#                end_range1 = as.Date(end_timestamp + lubridate::hours(12)))
+#     
+#     matches <- obs_transshipments %>%
+#         dplyr::arrange(date) %>%
+#         dplyr::mutate(event_num = c(seq(1, nrow(obs_transshipments)))) %>%
+#         fuzzyjoin::fuzzy_left_join(loitering_data, 
+#                         by = c("date" = "start_range1", 
+#                                "date" = "end_range1"), 
+#                         match_fun = list(`>=`, `<=`) ) %>%
+#         mutate(mean_lat = purrr::pmap_dbl(.l = list(start_lat,end_lat), .f = mean_two_col), 
+#                mean_lon = purrr::pmap_dbl(.l = list(start_lon,end_lon), .f = mean_two_col),
+#                distance_to_start = purrr::pmap_dbl(.l = list(start_lon, start_lat, lon, lat), .f = calc_dist_km),
+#                distance_to_end = purrr::pmap_dbl(.l = list(end_lon, end_lat, lon, lat), .f = calc_dist_km),
+#                distance_to_mean = purrr::pmap_dbl(.l = list(mean_lon, mean_lat, lon, lat), .f = calc_dist_km)) %>%
+#         group_by(event_num) %>%
+#         mutate(min_dist = min(distance_to_start, distance_to_end, distance_to_mean)) %>%
+#         filter(distance_to_start == min_dist | 
+#                    distance_to_end == min_dist | 
+#                    distance_to_mean == min_dist | 
+#                    is.na(min_dist)) %>%
+#         mutate(obs_duration_hr = time_min/60) %>%
+#         dplyr::select(start_timestamp, end_timestamp, start_lat, start_lon, 
+#                end_lat, end_lon, tot_hours, date, lat, lon, vessel, obs_duration_hr,
+#                total_tonnage_obs_transshipped, min_dist) %>%
+#         rename( loit_start = start_timestamp, loit_end = end_timestamp, 
+#                 loit_start_latitude = start_lat, loit_start_longitude = start_lon, 
+#                 loit_end_latitude = end_lat, loit_end_longitude = end_lon, 
+#                 loit_duration_hr = tot_hours, trans_date = date,
+#                 trans_lat = lat, trans_lon = lon, 
+#                 tot_ton_trans = total_tonnage_obs_transshipped, obs_duration_hr= obs_duration_hr, min_dist = min_dist) %>%
+#         mutate(match = ifelse(min_dist > 5 | is.na(min_dist), FALSE, TRUE)) %>%
+#         dplyr::select(match, everything())
+#     
+#     frac_match <- sum(matches$match)/nrow(matches)
+#     results <- list(match_df = matches, fraction_matched = frac_match)
+#     results
+# }
+```
+
+
+
+#### Run the matching functions
+```{r, echo = TRUE}
+encounters_match_list <- list()
+loitering_match_list <- list()
+# transshipment_encounters_match <- list()
+# transshipment_loiter_match <- list()
+
+for (i in seq_len(length(iccat_2017_2018_events))) {
+  encounters_match_list[names(iccat_2017_2018_events[i])] <-
+    list(encounters_matches(
+      iccat_2017_2018_events[[i]]$reported_transshipment,
+      iccat_2017_2018_events[[i]]$encounters
+    ))
+  loitering_match_list[names(iccat_2017_2018_events[i])] <-
+    list(loitering_matches(
+      iccat_2017_2018_events[[i]]$reported_transshipment,
+      iccat_2017_2018_events[[i]]$loitering
+    ))
+  # transshipment_encounters_match[names(iccat_2017_2018_events[i])] <-
+  #                list(match_obs_encounters(iccat_2017_2018_events[[i]]$reported_transshipment,
+  #                                         iccat_2017_2018_events[[i]]$encounters))
+  #  transshipment_loiter_match[names(iccat_2017_2018_events[i])] <-
+  #                list(match_obs_loitering(iccat_2017_2018_events[[i]]$reported_transshipment,
+  #                                        iccat_2017_2018_events[[i]]$loitering))
+}
+
+encounters_match_tot <- dplyr::bind_rows(encounters_match_list, .id = "column_label")
+loiter_match_tot <- dplyr::bind_rows(loitering_match_list, .id = "column_label")
+# transshipment_encounters_match_tot <- dplyr::bind_rows(transshipment_encounters_match, .id = "column_label")
+# transshipment_loiter_match_tot <- dplyr::bind_rows(transshipment_loiter_match, .id = "column_label")
+```
+
+#### Total Matching
+
+##### Encounters
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(encounters_match_tot, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(encounters_match_tot), fontSize = '65%'),
+                         height = 450, width = '100%')
+```
+
+
+##### Loitering Events
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(loiter_match_tot, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(loiter_match_tot), fontSize = '65%'),
+                         height = 450, width = '100%')
+```
+
+
+
+### Match by Vessel Voyage  
+
+##### Total number of observed transshipment events
+```{r}
+#number of transshipment events
+events <- iccat_obs_fish_2017_2018 %>% 
+  group_by(column_label) %>% 
+  count()
+```
+
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(events, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(events), fontSize = '65%'),
+                         height = 450, width = '100%')
+
+```
+
+
+#### Encounters Matched by Observered Transshipment  
+
+We find that encounters alone detect less than 30% (overall) of the
+actual transshipments reported by observers. Thus encounters, while useful, don't
+tell anywhere near the entire story. It will take a bit more examination to determine
+why the encounters miss events. The obvious possibilities are that the fishing vessels  
+  
+1. do not have AIS  
+2. do not have AIS on during the transshipment  
+3. the encounter does not match our rule set (>2 hours, <2 knots, <500 meters)  
+
+```{r}
+# by vessel/voyage
+encounters_match_counts <- encounters_match_tot %>%
+  group_by(column_label, match, trans_date, trans_lat, trans_lon) %>%
+  summarize(min_distance = min(min_dist)) %>%
+  group_by(column_label) %>%
+  summarise(matches = sum(match))
+
+encounter_obs_frac <- encounters_match_counts %>%
+  inner_join(events, 
+             by = "column_label") %>%
+  mutate(frac_match = matches / n)
+```
+
+```{r , echo=FALSE}
+widgetframe::frameWidget(DT::datatable(encounter_obs_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(encounter_obs_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
+# 0.2986888 mean
+```
+
+
+#### Loitering Events Matched to Observered Transshipment
+In this case I have used all loitering events. In previous publications we have
+defined loitering events in terms of events >8 hours where speeds were <2 knots.
+I have found that this misses alot of the actual transshipment events (they are not that long)
+or at least the slow periods is less than 8 hours.  
+
+##### Number of loitering matches
+```{r}
+loitering_match_counts <- loiter_match_tot %>%
+  #filter(column_label == 'FUTAGAMI 2017-10-28') %>%
+  group_by(column_label, match, trans_date, trans_lat, trans_lon) %>%
+  summarize(min_distance = min(min_dist)) %>%
+  group_by(column_label) %>%
+  summarise(matches = sum(match)) 
+
+loiter_obs_frac <- loitering_match_counts %>%
+  inner_join(events, 
+             by = 'column_label') %>%
+  mutate(frac_match = matches/n)
+```
+
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(loiter_obs_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(loiter_obs_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
+# 0.8112678 mean
+# 0.8823529 median
+# 0.3111111 - 1 :range
+```
+
+#### Number of Encounter Events matched out of all Encounter Events
+How many encounters are random and how many are actually matched?  
+This just shows that despite that fact that encounters only match 30% of the total
+observed transshipments, in many cases if of the encounters that we do identify most 
+do correspond to an actual event... as opposed to being a encounter where no transshipment
+event occured.  
+
+<br>
+
+Keep in mind that these are also only fish transshipments... some of the encounters
+may match with a supply transshipment. In the current set up this will be recorded as
+a non-match because that encounter is not a fish transshipment. Still there should be
+some credit for having detected two vessels in close proximity and where additional 
+cargo could be exchanged.  
+
+```{r}
+x <- list()
+for (i in seq(1, length(iccat_2017_2018_events))) {
+  x[names(iccat_2017_2018_events[i])] <- list(iccat_2017_2018_events[[i]]$encounters)
+  df <- bind_rows(x, .id = "column_label")
+}
+
+tot_encounters <- df %>%
+  group_by(column_label) %>%
+  summarize(n = n())
+
+
+matched_encounters <- encounters_match_tot %>%
+  group_by(column_label) %>%
+  summarize(match = sum(match))
+```
+
+
+```{r}
+encounter_match_frac <- matched_encounters %>%
+  inner_join(tot_encounters,
+             by = "column_label") %>%
+  mutate(frac_match = match / n)
+```
+
+```{r, echo=FALSE}
+widgetframe::frameWidget(DT::datatable(encounter_match_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(encounter_match_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
+```
+
+
+
+#### Number of Loitering Events match out of all loitering events
+How many loitering events are random and how many are actually matched?
+
+This is not that useful at this moment. As its possible for a single loitering
+event to match multiple actual transshipment events.
+```{r}
+total_loitering_events <- loiter_match_tot %>%
+  ungroup() %>%
+  dplyr::select(column_label, loit_start, loit_end, 
+                loit_start_latitude, loit_start_longitude,
+                loit_end_latitude, loit_end_longitude) %>%
+  distinct(column_label, loit_start, loit_end, loit_start_latitude, 
+           loit_start_longitude,loit_end_latitude, loit_end_longitude) %>%
+  group_by(column_label) %>%
+  count()
+```
+
+
+```{r}
+loiter_match_frac <- loitering_match_counts %>%
+  inner_join(total_loitering_events, 
+             by = 'column_label') %>%
+  mutate(frac_match = matches/n)
+```
+
+```{r, echo=FALSE}
+
+widgetframe::frameWidget(DT::datatable(loiter_match_frac, 
+                                       fillContainer = TRUE,
+                                       options = list(pageLength = 5)) %>%
+                           DT::formatStyle(colnames(loiter_match_frac), fontSize = '65%'),
+                         height = 450, width = '100%')
+```
+
+
+## Mapping Voyages
+
+### GENTA MARU
+##### Voyage 1
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`GENTA MARU 2017-08-18`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "GENTA MARU 2017-08-18" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "GENTA MARU 2017-08-18" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+###### Voyage 2
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`GENTA MARU 2018-01-14`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "GENTA MARU 2018-01-14" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "GENTA MARU 2018-01-14" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+###### Voyage 3
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`GENTA MARU 2018-07-06`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "GENTA MARU 2018-07-06" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "GENTA MARU 2018-07-06" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+### TAISEI MARU NO 24
+
+
+This vessel is an example of a voyage where we had relatively low levels of matching
+between loitering and actual events `See also TAISEI MARU NO 15`. You can see that 
+the events (red circles) occur in regions where visually we might expect an event, but 
+where the loitering algorithm did not detect an event. This needs to be explored to
+determine what features of theselocations are missing from our rule based algorithm 
+and how we might detect them more accurately.  
+
+<br>
+
+It is also important to note that despite a visual appearance of matching, my current
+algorithm requires that an observed transshipment must be within 5 km of a loitering
+period and within 12 hours. Thus there are situations where an event appears well
+matched, but doesn't actually meet this requirement.  
+
+<br>
+##### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`TAISEI MARU NO 24 2017-10-05`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "TAISEI MARU NO 24 2017-10-05" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "TAISEI MARU NO 24 2017-10-05" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+###### Voyage 2
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`TAISEI MARU NO 24 2018-03-30`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "TAISEI MARU NO 24 2018-03-30" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "TAISEI MARU NO 24 2018-03-30" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+###### Voyage 3
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`TAISEI MARU NO 24 2018-06-15`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "TAISEI MARU NO 24 2018-06-15" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "TAISEI MARU NO 24 2018-06-15" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+
+### FUTAGAMI
+###### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`FUTAGAMI 2017-10-28`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "FUTAGAMI 2017-10-28" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "FUTAGAMI 2017-10-28" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+
+
+### IBUKI
+###### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`IBUKI 2017-11-15`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "IBUKI 2017-11-15" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "IBUKI 2017-11-15" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+###### Voyage 2
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`IBUKI 2018-05-27`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "IBUKI 2018-05-27" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "IBUKI 2018-05-27" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+
+### MEITA MARU
+###### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`MEITA MARU 2017-11-14`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "MEITA MARU 2017-11-14" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "MEITA MARU 2017-11-14" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+###### Voyage 2
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`MEITA MARU 2018-04-18`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "MEITA MARU 2018-04-18" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "MEITA MARU 2018-04-18" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+
+
+### TAISEI MARU NO 15
+
+This vessel is an example of a voyage where we had relatively low levels of matching
+between loitering and actual events (14/45). You can see that the events (red circles) occur
+in regions where visually we might expect an event, but where the loitering algorithm did
+not detect an event. This needs to be explored to determine what features of these
+locations are missing from our rule based algorithm and how we might detect them 
+more accurately.  
+
+<br>
+
+It is also important to note that despite a visual appearance of matching, my current
+algorithm requires that an observed transshipment must be within 5 km of a loitering
+period and within 12 hours. Thus there are situations where an event appears well
+matched, but doesn't actually meet this requirement.  
+
+<br>
+
+
+###### Voyage 1
+
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`TAISEI MARU NO 15 2017-12-01`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "TAISEI MARU NO 15 2017-12-01" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "TAISEI MARU NO 15 2017-12-01" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+###### Voyage 2
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`TAISEI MARU NO 15 2018-06-12`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "TAISEI MARU NO 15 2018-06-12" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "TAISEI MARU NO 15 2018-06-12" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+###### Voyage 3
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`TAISEI MARU NO 15 2018-08-10`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "TAISEI MARU NO 15 2018-08-10" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "TAISEI MARU NO 15 2018-08-10" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+
+### CHIKUMA
+###### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`CHIKUMA 2018-02-01`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "CHIKUMA 2018-02-01" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "CHIKUMA 2018-02-01" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+
+
+### LADY TUNA
+###### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`LADY TUNA 2018-02-22`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "LADY TUNA 2018-02-22" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "LADY TUNA 2018-02-22" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+### SHOTA MARU
+###### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`SHOTA MARU 2018-03-12`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "SHOTA MARU 2018-03-12" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "SHOTA MARU 2018-03-12" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+### VICTORIA
+###### Voyage 1
+
+```{r, fig.width=12, fig.height=12, dpi = 300}
+iccat_2017_2018_events$`VICTORIA 2 2018-04-30`$voyage_plot +
+   geom_point(
+  data = loiter_match_tot %>%
+    filter(column_label == "VICTORIA 2 2018-04-30" &
+      match == TRUE), aes(trans_lon, trans_lat),
+  shape = 21, size = 4, color = "pink"
+) +
+  geom_point(
+    data = encounters_match_tot %>%
+      filter(column_label == "VICTORIA 2 2018-04-30" &
+        match == TRUE), aes(trans_lon, trans_lat),
+    shape = 21, size = 4, color = "pink"
+  )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## EXTRA
+
+
+GENTA MARU 2017 voyage
+http://globalfishingwatch.org/map/workspace/udw-v2-1b6626e0-90dd-4fa5-a91f-c8407a605cfa
+
+
+```{r, eval=FALSE}
+gentamaru_encounters_2017 <- fishing_encounters_2017_2018 %>%
+    filter(carrier_vessel == '1a2575ce1-1a29-7e70-239a-516a9cdfaa75' &
+               start_time >= as.POSIXct('2017-08-18') &
+               end_time <= as.POSIXct('2017-09-19'))
+
+gentamaru_encounters <- fishing_encounters_2017_2018 %>%
+    filter(carrier_vessel == '1a2575ce1-1a29-7e70-239a-516a9cdfaa75' &
+               start_time >= as.POSIXct('2018-07-06') &
+               end_time <= as.POSIXct('2018-08-07'))
+
+taiseimaru15_encounters <- fishing_encounters_2017_2018 %>%
+    filter(carrier_vessel == '3a165ab38-8e2a-2c45-3f10-2228622f68e2' &
+               start_time >= as.POSIXct('2018-06-12') &
+               end_time <= as.POSIXct('2018-08-09')) %>%
+    arrange(start_time) %>%
+    mutate(row = row_number())
+```
+
+
+Don't use encounter 6 for training. It doesn't appear to match
+
+```{r, eval=FALSE}
+test_encounters <- rbind(taiseimaru15_encounters %>%
+    filter(row != 6) %>%
+    select(-row),
+    gentamaru_encounters ,
+    gentamaru_encounters_2017 )
+
+
+readr::write_csv(test_encounters, '~/Documents/GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/initial_encounters_for_labelling.csv')
+```
+
+
+
+
+

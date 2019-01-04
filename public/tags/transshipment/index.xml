@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Transshipment on Nate A Miller</title>
+    <link>/tags/transshipment/</link>
+    <description>Recent content in Transshipment on Nate A Miller</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    
+	<atom:link href="/tags/transshipment/index.xml" rel="self" type="application/rss+xml" />
+    
+    
+    <item>
+      <title>ICCAT Observer Data Comparison 2017-2018</title>
+      <link>/portfolio/iccat_transshipment_analysis_2017_2018/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      
+      <guid>/portfolio/iccat_transshipment_analysis_2017_2018/</guid>
+      <description>Take-home This is an analysis of the observer reported transshipments from ICCAT. These events were recorded between 2017 and mid-2018. The attempt is made here to determine how well the GFW events (encounters/likely transshipments and loitering events) approximate actual events. This was done by identifying the proximity of these events to actual observer reported transshipments.
+Transshipment Features We found that transshipment events generall occur quickly with most requring 1-2 hours median: 132.</description>
+    </item>
+    
+  </channel>
+</rss>
