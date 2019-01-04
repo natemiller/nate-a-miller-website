@@ -1,8 +1,8 @@
 ---
 title: "ICCAT Observer Data Comparison 2017-2018"
-output: 
-  html_document: 
-    keep_md: yes
+author: "Frida Gomam"
+categories: ["R"]
+tags: ["transshipment", "ICCAT"]
 ---
 
 ```{r setup, include=FALSE}
