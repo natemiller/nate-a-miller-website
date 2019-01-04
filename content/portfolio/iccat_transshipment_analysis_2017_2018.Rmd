@@ -1,6 +1,6 @@
 ---
 title: "ICCAT Observer Data Comparison 2017-2018"
-author: "Frida Gomam"
+author: "Nate Miller"
 categories: ["R"]
 tags: ["transshipment", "ICCAT"]
 ---
