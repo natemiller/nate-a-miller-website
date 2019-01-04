@@ -1,8 +1,10 @@
 ---
 title: "ICCAT Observer Data Comparison 2017-2018"
 author: "Nate Miller"
-categories: ["R"]
-tags: ["transshipment", "ICCAT"]
+tags:
+- transshipment
+- ICCAT
+categories: R
 ---
 
 ```{r setup, include=FALSE}
@@ -85,7 +87,7 @@ Load the ICCAT observer data from 2017 - 2018
 ```{r, message=FALSE, warning=FALSE, comment=FALSE}
 ### Load in the ICCAT Observer data
 
-iccat_obs_data_2017_2018 <- readr::read_csv('./ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv')
+iccat_obs_data_2017_2018 <- readr::read_csv('../../../../GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv')
 ```
 
 
@@ -450,8 +452,8 @@ vessel_track_query <- function(mmsi, start_date, end_date) {
 
 
 shp_list <- list(
-  land_sf = "../../shapefiles/ne_10m_admin_0_countries/ne_10m_admin_0_countries_polygons/ne_10m_admin_0_countries.shp",
-  eez_sf = "../../shapefiles/World_EEZ_v8_20140228_LR/World_EEZ_v8_2014.shp"
+  land_sf = "../../../../GlobalFishingWatch/shapefiles/ne_10m_admin_0_countries/ne_10m_admin_0_countries_polygons/ne_10m_admin_0_countries.shp",
+  eez_sf = "../../../../GlobalFishingWatch/shapefiles/World_EEZ_v8_20140228_LR/World_EEZ_v8_2014.shp"
 )
 
 
