@@ -1,0 +1,257 @@
+---
+showonlyimage: true
+title: "Shiny Vessel Tracks"
+image: "img/portfolio/vessel_track_colors.png"
+description: "Quick Shiny dashboard tool for exploring vessel tracks, illustrating the use of 
+`geom_sf` in Plotly maps, how to conenct highlighting across several figures using
+the `crosstalk` passage."
+---
+
+This app is designed to help identify the patterns that characterize 
+setting, hauling, and the intermediate transits. Highlighting sections of 
+track on the map, highlights the same points on the speed and course charts.
+An example is hosted here https://natemiller.shinyapps.io/birdlife/
+
+Here is a test [.CSV file](/img/portfolio/659283000_3_19.csv) that can be loaded
+into the shiny app as an example.  
+
+![](/portfolio/shiny_vessel_track_files/vessel_track_shiny_app.png)
+```{r, message=FALSE, comment=FALSE, warning=FALSE}
+# Shiny App for Mapping and Interacting with
+# Longline Vessel Tracks And Visualizing
+# Sets and Hauls
+
+
+#############################################
+### Global calls
+#############################################
+
+# Load packages
+library(shiny)
+library(dplyr)
+library(shinyjs)
+library(shinydashboard)
+library(plotly)
+library(crosstalk)
+library(scales)
+library(dichromat)
+library(sf)
+
+#############################################
+# Define UI for application
+#############################################
+ui <- dashboardPage(
+    dashboardHeader(title = "Set Detections",
+                    titleWidth = 100),
+    dashboardSidebar(collapsed = TRUE,
+                     fileInput("file1", "Upload CSV File",
+                               accept = c(
+                                   "text/csv",
+                                   "text/comma-separated-values,text/plain",
+                                   ".csv")
+                     )),
+    dashboardBody(
+    #tags$style(type = "text/css", "#map {height: calc(100vh - 200px) !important;}"),
+    #tags$style(type = "text/css", "#speed_plotly {height: calc(100vh - 200px) !important;}"),
+    fluidRow(
+        column( width = 7,
+        box(title = tagList(shiny::icon("globe"),
+                            "Map of Vessel Track"),
+            width = NULL,
+            height = 700,
+            solidHeader=FALSE,
+            status = "primary",
+            plotlyOutput("map", height = "650px"))),
+        column(width = 5,
+               fluidRow(
+        tabBox(#title = tagList(shiny::icon("signal"),
+                #            "Speed/Course Timeseries"),
+               id = "speed_course_tab", height = "350px",
+               width = NULL,
+               tabPanel("Vessel Speed Timeseries", plotlyOutput("speed_plotly"), height = "350px"),
+               tabPanel("Vessel Course Timeseries", plotlyOutput("course_plotly"), height = "350px")
+            #width = 5
+)
+
+           ),
+
+fluidRow(
+        box(title = tagList(shiny::icon("signal"),
+                                         "Fishing Score Timeseries"),
+            width = NULL,
+            #height = 350,
+            solidHeader=FALSE,
+            status = "warning",
+            plotlyOutput("fishing_plotly",height = "300px"))
+)
+        )
+    )
+    )
+)
+
+#############################################
+# Define server logic
+#############################################
+server <- function(input, output) {
+
+    ####################################################
+    #ADD YOUR MAXBOX KEY HERE OR TO YOUR .Renviron FILE#
+    ###################################################
+    #Sys.setenv('MAPBOX_TOKEN' = 'mapbox_key')
+
+    ay <- list(
+        tickfont = list(color = "black"),
+        overlaying = "y",
+        side = "right",
+        title = ""
+    )
+    #"#554A55" = "transit"
+    #specify colors
+    pal <- c("#365474", "#bcbd22", "#f28e2b" )
+    #pal <- setNames(pal, c("all", "set", "haul"))
+
+
+    #specify dataset from inputs
+    dataset <- reactive({
+        #initially the file input will be NULL
+        if (is.null(input$file1)) {
+            return()
+        } else{
+            File1 = input$file1
+            df <- readr::read_csv(File1$datapath)
+
+            df <- df %>%
+                arrange(timestamp)
+        }
+        })
+
+    # provide a point symbolizing the start of the track (will be green)
+    start_pos <- reactive({
+        req(input$file1)
+        lon <- dataset()[which(dataset()$timestamp == min(dataset()$timestamp)),'lon']
+        lat <- dataset()[which(dataset()$timestamp == min(dataset()$timestamp)),'lat']
+        pos <- data.frame(lon = lon, lat = lat)
+        sp::coordinates(pos)=~lon+lat
+        sf::st_as_sf(pos)
+    })
+
+    # provide a point symbolizing the end of the track (will be red)
+    end_pos <- reactive({
+        req(input$file1)
+        lon <- dataset()[which(dataset()$timestamp == max(dataset()$timestamp)),'lon']
+        lat <- dataset()[which(dataset()$timestamp == max(dataset()$timestamp)),'lat']
+        pos <- data.frame(lon = lon, lat = lat)
+        sp::coordinates(pos)=~lon+lat
+        sf::st_as_sf(pos)
+    })
+
+    #convert the dataset to an simple features object for mapping
+    dataset_sf <- reactive({
+        req(input$file1)
+            data_file_sf <- sf::st_as_sf(dataset(), coords = c('lon','lat'))
+            data_file_sf
+
+        })
+
+    #make the dataset a SharedData with timestamp as the shared variable
+    shared_dataset <- reactive({
+        req(input$file1)
+            #data_file <- read.csv(inFile$datapath, header = input$header)
+            data_file_sf <- SharedData$new(dataset_sf(), ~timestamp)
+            data_file_sf
+    })
+
+    #render the map using mapbox
+    output$map<-renderPlotly({
+        req(input$file1)
+        plot_mapbox(mode = 'scattermapbox') %>%
+            #add_sf(data = land_sf, plot = FALSE, fill = TRUE, showlegend = FALSE) %>%
+            add_sf(data = shared_dataset(),
+                   mode = "markers+lines",
+                   color = ~event_type,
+                   colors = pal,
+                   height = 300,
+                   hoverinfo = 'text',
+                   text = ~paste(timestamp)
+                   ) %>%
+            add_sf(data = start_pos(),
+                        color = I("green"), showlegend = FALSE)%>%
+            add_sf(data = end_pos(),
+                   color = I('red'), showlegend = FALSE) %>%
+            highlight("plotly_selected", dynamic = FALSE, persistent = FALSE,
+                      color = toRGB("red"), opacityDim = 0.5) %>%
+            layout(mapbox = list(
+                zoom = 2,
+                center = list(lon = ~mean(dataset()$lon),
+                              lat = ~mean(dataset()$lat)),
+                style = 'dark'
+            ))
+    })
+
+    #render the speed timeseries plot
+    output$speed_plotly<-renderPlotly({
+        req(input$file1)
+        plot_ly(shared_dataset(),
+                x = ~timestamp,
+                y = ~implied_speed,
+                height = 300,tooltip = "timestamp") %>%
+            #add_markers(alpha = 0.5, marker = list(color = '#59a14f'), showlegend = FALSE) %>%
+            add_trace(name = '', showlegend = FALSE, mode = 'lines', opacity = 0.2, line = list(color = '#4e79a7')) %>%
+            add_trace(name = '', showlegend = FALSE, mode = 'markers', marker = list(color = '#4e79a7')) %>%
+            add_trace(x=~timestamp, y=~night, type = 'scatter', mode = 'lines', yaxis = "y2", line = list(color = 'orange')) %>%
+            highlight("plotly_selected", dynamic = FALSE, persistent = FALSE,
+                      opacityDim = 0.5, color = toRGB("red")) %>%
+            layout(yaxis2 = ay, margin = list(r = 50),
+                   xaxis = list(title = ''),
+                   yaxis = list(title = 'Speed (knots)'))
+    })
+
+    #render the course timeseries plot
+    output$course_plotly<-renderPlotly({
+        req(input$file1)
+        plot_ly(shared_dataset(),
+                x = ~timestamp,
+                y = ~course,
+                height = 300,tooltip = "timestamp") %>%
+            #add_markers(alpha = 0.5, marker = list(color = '#4e79a7'), showlegend = FALSE) %>%
+            add_trace(name = '', showlegend = FALSE, mode = 'lines', opacity = 0.2, line = list(color = '#59a14f')) %>%
+            add_trace(name = '', showlegend = FALSE, mode = 'markers', marker = list(color = '#59a14f')) %>%
+            add_trace(x=~timestamp, y=~night, type = 'scatter', mode = 'lines', yaxis = "y2", line = list(color = 'orange')) %>%
+            highlight("plotly_selected", dynamic = FALSE, persistent = FALSE,
+                      opacityDim = 0.5, color = toRGB("red")) %>%
+            layout(yaxis2 = ay, margin = list(r = 50),
+                   xaxis = list(title = ''),
+                   yaxis = list(title = 'Course (degrees)'))
+
+    })
+
+    #render the fishing score timeseries plot
+    output$fishing_plotly<-renderPlotly({
+        req(input$file1)
+        plot_ly(shared_dataset(),
+                x = ~timestamp,
+                y = ~nnet_score2,
+                height = 300,tooltip = "timestamp") %>%
+            #add_markers(alpha = 0.5, marker = list(color = '#4e79a7'), showlegend = FALSE) %>%
+            add_trace(name = '', showlegend = FALSE, mode = 'lines', opacity = 1, line = list(color = '#4e9fa0'),connectgaps = TRUE) %>%
+            add_trace(name = '', showlegend = FALSE, mode = 'markers', marker = list(color = '#4e9fa0')) %>%
+            #add_trace(x=~timestamp, y=~night, type = 'scatter', mode = 'lines', yaxis = "y2", line = list(color = 'orange')) %>%
+            highlight("plotly_selected", dynamic = FALSE, persistent = FALSE,
+                      opacityDim = 0.8, color = toRGB("red")) %>%
+            layout(yaxis2 = ay, margin = list(r = 50),
+                   xaxis = list(title = ''),
+                   yaxis = list(title = 'Fishing Score', range = c(-0.1,1.1), dtick = 1))
+
+    })
+}
+
+#############################################
+# Run the application
+#############################################
+#shinyApp(ui = ui, server = server)
+
+
+```
+
+
+

@@ -1,0 +1,249 @@
+---
+showonlyimage: true
+title: "Shiny Vessel Tracks"
+image: "img/portfolio/vessel_track_colors.png"
+description: "Quick Shiny dashboard tool for exploring vessel tracks, illustrating the use of 
+`geom_sf` in Plotly maps, how to conenct highlighting across several figures using
+the `crosstalk` passage."
+---
+
+
+
+<p>This app is designed to help identify the patterns that characterize
+setting, hauling, and the intermediate transits. Highlighting sections of
+track on the map, highlights the same points on the speed and course charts.
+An example is hosted here <a href="https://natemiller.shinyapps.io/birdlife/" class="uri">https://natemiller.shinyapps.io/birdlife/</a></p>
+<p>Here is a test <a href="/img/portfolio/659283000_3_19.csv">.CSV file</a> that can be loaded
+into the shiny app as an example.</p>
+<p><img src="/portfolio/shiny_vessel_track_files/vessel_track_shiny_app.png" /></p>
+<pre class="r"><code># Shiny App for Mapping and Interacting with
+# Longline Vessel Tracks And Visualizing
+# Sets and Hauls
+
+
+#############################################
+### Global calls
+#############################################
+
+# Load packages
+library(shiny)
+library(dplyr)
+library(shinyjs)
+library(shinydashboard)
+library(plotly)
+library(crosstalk)
+library(scales)
+library(dichromat)
+library(sf)
+
+#############################################
+# Define UI for application
+#############################################
+ui &lt;- dashboardPage(
+    dashboardHeader(title = &quot;Set Detections&quot;,
+                    titleWidth = 100),
+    dashboardSidebar(collapsed = TRUE,
+                     fileInput(&quot;file1&quot;, &quot;Upload CSV File&quot;,
+                               accept = c(
+                                   &quot;text/csv&quot;,
+                                   &quot;text/comma-separated-values,text/plain&quot;,
+                                   &quot;.csv&quot;)
+                     )),
+    dashboardBody(
+    #tags$style(type = &quot;text/css&quot;, &quot;#map {height: calc(100vh - 200px) !important;}&quot;),
+    #tags$style(type = &quot;text/css&quot;, &quot;#speed_plotly {height: calc(100vh - 200px) !important;}&quot;),
+    fluidRow(
+        column( width = 7,
+        box(title = tagList(shiny::icon(&quot;globe&quot;),
+                            &quot;Map of Vessel Track&quot;),
+            width = NULL,
+            height = 700,
+            solidHeader=FALSE,
+            status = &quot;primary&quot;,
+            plotlyOutput(&quot;map&quot;, height = &quot;650px&quot;))),
+        column(width = 5,
+               fluidRow(
+        tabBox(#title = tagList(shiny::icon(&quot;signal&quot;),
+                #            &quot;Speed/Course Timeseries&quot;),
+               id = &quot;speed_course_tab&quot;, height = &quot;350px&quot;,
+               width = NULL,
+               tabPanel(&quot;Vessel Speed Timeseries&quot;, plotlyOutput(&quot;speed_plotly&quot;), height = &quot;350px&quot;),
+               tabPanel(&quot;Vessel Course Timeseries&quot;, plotlyOutput(&quot;course_plotly&quot;), height = &quot;350px&quot;)
+            #width = 5
+)
+
+           ),
+
+fluidRow(
+        box(title = tagList(shiny::icon(&quot;signal&quot;),
+                                         &quot;Fishing Score Timeseries&quot;),
+            width = NULL,
+            #height = 350,
+            solidHeader=FALSE,
+            status = &quot;warning&quot;,
+            plotlyOutput(&quot;fishing_plotly&quot;,height = &quot;300px&quot;))
+)
+        )
+    )
+    )
+)
+
+#############################################
+# Define server logic
+#############################################
+server &lt;- function(input, output) {
+
+    ####################################################
+    #ADD YOUR MAXBOX KEY HERE OR TO YOUR .Renviron FILE#
+    ###################################################
+    #Sys.setenv(&#39;MAPBOX_TOKEN&#39; = &#39;mapbox_key&#39;)
+
+    ay &lt;- list(
+        tickfont = list(color = &quot;black&quot;),
+        overlaying = &quot;y&quot;,
+        side = &quot;right&quot;,
+        title = &quot;&quot;
+    )
+    #&quot;#554A55&quot; = &quot;transit&quot;
+    #specify colors
+    pal &lt;- c(&quot;#365474&quot;, &quot;#bcbd22&quot;, &quot;#f28e2b&quot; )
+    #pal &lt;- setNames(pal, c(&quot;all&quot;, &quot;set&quot;, &quot;haul&quot;))
+
+    #specify dataset from inputs
+    dataset &lt;- reactive({
+        #initially the file input will be NULL
+        if (is.null(input$file1)) {
+            return()
+        } else{
+            File1 = input$file1
+            df &lt;- readr::read_csv(File1$datapath)
+
+            df &lt;- df %&gt;%
+                arrange(timestamp)
+        }
+        })
+
+    # provide a point symbolizing the start of the track (will be green)
+    start_pos &lt;- reactive({
+        req(input$file1)
+        lon &lt;- dataset()[which(dataset()$timestamp == min(dataset()$timestamp)),&#39;lon&#39;]
+        lat &lt;- dataset()[which(dataset()$timestamp == min(dataset()$timestamp)),&#39;lat&#39;]
+        pos &lt;- data.frame(lon = lon, lat = lat)
+        sp::coordinates(pos)=~lon+lat
+        sf::st_as_sf(pos)
+    })
+
+    # provide a point symbolizing the end of the track (will be red)
+    end_pos &lt;- reactive({
+        req(input$file1)
+        lon &lt;- dataset()[which(dataset()$timestamp == max(dataset()$timestamp)),&#39;lon&#39;]
+        lat &lt;- dataset()[which(dataset()$timestamp == max(dataset()$timestamp)),&#39;lat&#39;]
+        pos &lt;- data.frame(lon = lon, lat = lat)
+        sp::coordinates(pos)=~lon+lat
+        sf::st_as_sf(pos)
+    })
+
+    #convert the dataset to an simple features object for mapping
+    dataset_sf &lt;- reactive({
+        req(input$file1)
+            data_file_sf &lt;- sf::st_as_sf(dataset(), coords = c(&#39;lon&#39;,&#39;lat&#39;))
+            data_file_sf
+
+        })
+
+    #make the dataset a SharedData with timestamp as the shared variable
+    shared_dataset &lt;- reactive({
+        req(input$file1)
+            #data_file &lt;- read.csv(inFile$datapath, header = input$header)
+            data_file_sf &lt;- SharedData$new(dataset_sf(), ~timestamp)
+            data_file_sf
+    })
+
+    #render the map using mapbox
+    output$map&lt;-renderPlotly({
+        req(input$file1)
+        plot_mapbox(mode = &#39;scattermapbox&#39;) %&gt;%
+            #add_sf(data = land_sf, plot = FALSE, fill = TRUE, showlegend = FALSE) %&gt;%
+            add_sf(data = shared_dataset(),
+                   mode = &quot;markers+lines&quot;,
+                   color = ~event_type,
+                   colors = pal,
+                   height = 300,
+                   hoverinfo = &#39;text&#39;,
+                   text = ~paste(timestamp)
+                   ) %&gt;%
+            add_sf(data = start_pos(),
+                        color = I(&quot;green&quot;), showlegend = FALSE)%&gt;%
+            add_sf(data = end_pos(),
+                   color = I(&#39;red&#39;), showlegend = FALSE) %&gt;%
+            highlight(&quot;plotly_selected&quot;, dynamic = FALSE, persistent = FALSE,
+                      color = toRGB(&quot;red&quot;), opacityDim = 0.5) %&gt;%
+            layout(mapbox = list(
+                zoom = 2,
+                center = list(lon = ~mean(dataset()$lon),
+                              lat = ~mean(dataset()$lat)),
+                style = &#39;dark&#39;
+            ))
+    })
+
+    #render the speed timeseries plot
+    output$speed_plotly&lt;-renderPlotly({
+        req(input$file1)
+        plot_ly(shared_dataset(),
+                x = ~timestamp,
+                y = ~implied_speed,
+                height = 300,tooltip = &quot;timestamp&quot;) %&gt;%
+            #add_markers(alpha = 0.5, marker = list(color = &#39;#59a14f&#39;), showlegend = FALSE) %&gt;%
+            add_trace(name = &#39;&#39;, showlegend = FALSE, mode = &#39;lines&#39;, opacity = 0.2, line = list(color = &#39;#4e79a7&#39;)) %&gt;%
+            add_trace(name = &#39;&#39;, showlegend = FALSE, mode = &#39;markers&#39;, marker = list(color = &#39;#4e79a7&#39;)) %&gt;%
+            add_trace(x=~timestamp, y=~night, type = &#39;scatter&#39;, mode = &#39;lines&#39;, yaxis = &quot;y2&quot;, line = list(color = &#39;orange&#39;)) %&gt;%
+            highlight(&quot;plotly_selected&quot;, dynamic = FALSE, persistent = FALSE,
+                      opacityDim = 0.5, color = toRGB(&quot;red&quot;)) %&gt;%
+            layout(yaxis2 = ay, margin = list(r = 50),
+                   xaxis = list(title = &#39;&#39;),
+                   yaxis = list(title = &#39;Speed (knots)&#39;))
+    })
+
+    #render the course timeseries plot
+    output$course_plotly&lt;-renderPlotly({
+        req(input$file1)
+        plot_ly(shared_dataset(),
+                x = ~timestamp,
+                y = ~course,
+                height = 300,tooltip = &quot;timestamp&quot;) %&gt;%
+            #add_markers(alpha = 0.5, marker = list(color = &#39;#4e79a7&#39;), showlegend = FALSE) %&gt;%
+            add_trace(name = &#39;&#39;, showlegend = FALSE, mode = &#39;lines&#39;, opacity = 0.2, line = list(color = &#39;#59a14f&#39;)) %&gt;%
+            add_trace(name = &#39;&#39;, showlegend = FALSE, mode = &#39;markers&#39;, marker = list(color = &#39;#59a14f&#39;)) %&gt;%
+            add_trace(x=~timestamp, y=~night, type = &#39;scatter&#39;, mode = &#39;lines&#39;, yaxis = &quot;y2&quot;, line = list(color = &#39;orange&#39;)) %&gt;%
+            highlight(&quot;plotly_selected&quot;, dynamic = FALSE, persistent = FALSE,
+                      opacityDim = 0.5, color = toRGB(&quot;red&quot;)) %&gt;%
+            layout(yaxis2 = ay, margin = list(r = 50),
+                   xaxis = list(title = &#39;&#39;),
+                   yaxis = list(title = &#39;Course (degrees)&#39;))
+
+    })
+
+    #render the fishing score timeseries plot
+    output$fishing_plotly&lt;-renderPlotly({
+        req(input$file1)
+        plot_ly(shared_dataset(),
+                x = ~timestamp,
+                y = ~nnet_score2,
+                height = 300,tooltip = &quot;timestamp&quot;) %&gt;%
+            #add_markers(alpha = 0.5, marker = list(color = &#39;#4e79a7&#39;), showlegend = FALSE) %&gt;%
+            add_trace(name = &#39;&#39;, showlegend = FALSE, mode = &#39;lines&#39;, opacity = 1, line = list(color = &#39;#4e9fa0&#39;),connectgaps = TRUE) %&gt;%
+            add_trace(name = &#39;&#39;, showlegend = FALSE, mode = &#39;markers&#39;, marker = list(color = &#39;#4e9fa0&#39;)) %&gt;%
+            #add_trace(x=~timestamp, y=~night, type = &#39;scatter&#39;, mode = &#39;lines&#39;, yaxis = &quot;y2&quot;, line = list(color = &#39;orange&#39;)) %&gt;%
+            highlight(&quot;plotly_selected&quot;, dynamic = FALSE, persistent = FALSE,
+                      opacityDim = 0.8, color = toRGB(&quot;red&quot;)) %&gt;%
+            layout(yaxis2 = ay, margin = list(r = 50),
+                   xaxis = list(title = &#39;&#39;),
+                   yaxis = list(title = &#39;Fishing Score&#39;, range = c(-0.1,1.1), dtick = 1))
+
+    })
+}
+
+#############################################
+# Run the application
+#############################################
+#shinyApp(ui = ui, server = server)</code></pre>
