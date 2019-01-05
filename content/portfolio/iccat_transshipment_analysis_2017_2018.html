@@ -1,6 +1,8 @@
 ---
 title: "ICCAT Observer Data Comparison 2017-2018"
 author: "Nate Miller"
+showonlyimage: false
+image: "img/portfolio/iccat_vessel_track.png"
 tags:
 - transshipment
 - ICCAT
@@ -103,7 +105,7 @@ BQ_connection &lt;-  dbConnect(bigquery(), project = &quot;world-fishing-827&quo
 <p>Load the ICCAT observer data from 2017 - 2018</p>
 <pre class="r"><code>### Load in the ICCAT Observer data
 
-iccat_obs_data_2017_2018 &lt;- readr::read_csv(&#39;../../../../GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv&#39;)</code></pre>
+iccat_obs_data_2017_2018 &lt;- readr::read_csv(&#39;../../../../GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/ICCAT Transshipment 2017 2018/ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv&#39;)</code></pre>
 <pre class="r"><code># function that takes a lat or lon specified in degree minutes or degree, minutes, seconds
 # and converts to decimal degrees
 to_dec_degrees &lt;- function(location_string) {

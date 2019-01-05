@@ -1,6 +1,8 @@
 ---
 title: "ICCAT Observer Data Comparison 2017-2018"
 author: "Nate Miller"
+showonlyimage: false
+image: "img/portfolio/iccat_vessel_track.png"
 tags:
 - transshipment
 - ICCAT
@@ -91,7 +93,7 @@ Load the ICCAT observer data from 2017 - 2018
 ```{r, message=FALSE, warning=FALSE, comment=FALSE}
 ### Load in the ICCAT Observer data
 
-iccat_obs_data_2017_2018 <- readr::read_csv('../../../../GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv')
+iccat_obs_data_2017_2018 <- readr::read_csv('../../../../GlobalFishingWatch/Projects/ICCAT_transshipment_assessement/ICCAT Transshipment 2017 2018/ICCAT_transshipments_2017_2018 - ICCAT_transshipments_2017_2018..csv')
 ```
 
 
