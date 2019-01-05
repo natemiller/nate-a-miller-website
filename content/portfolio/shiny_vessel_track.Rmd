@@ -12,7 +12,7 @@ setting, hauling, and the intermediate transits. Highlighting sections of
 track on the map, highlights the same points on the speed and course charts.
 An example is hosted here https://natemiller.shinyapps.io/birdlife/
 
-Here is a test [.CSV file](/img/portfolio/659283000_3_19.csv) that can be loaded
+Here is a test [.CSV file](/img/portfolio/vessel_track.csv) that can be loaded
 into the shiny app as an example.  
 
 ![](/portfolio/shiny_vessel_track_files/vessel_track_shiny_app.png)
