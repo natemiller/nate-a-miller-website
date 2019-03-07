@@ -6,10 +6,20 @@
     <description>Recent content in Portfolios on Nate A Miller</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Thu, 23 Jul 2015 21:13:14 -0500</lastBuildDate>
+    <lastBuildDate>Thu, 07 Mar 2019 00:00:00 +0000</lastBuildDate>
     
 	<atom:link href="/portfolio/index.xml" rel="self" type="application/rss+xml" />
     
+    
+    <item>
+      <title>Uploading Currents Data</title>
+      <link>/portfolio/uploading-currents-data/</link>
+      <pubDate>Thu, 07 Mar 2019 00:00:00 +0000</pubDate>
+      
+      <guid>/portfolio/uploading-currents-data/</guid>
+      <description>library(tidyverse) library(lubridate) library(ncdf4) library(chron) This is an initial function to pull currents data from the HYCOM GOFS 3.1: 41-layer HYCOM + NCODA Global 1/12° Analysis. Data availability varies by time period but this particular function pulls for data that goes back to at least 2018-01-01. Slight modifications to the curl url may be necessary to pull earlier currents data.
+The data resolution varied by latitude in the following manner. The grid is 0.</description>
+    </item>
     
     <item>
       <title>Hello R Markdown</title>
