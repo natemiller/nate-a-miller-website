@@ -4,9 +4,8 @@ author: Nate Miller
 date: '2019-03-07'
 slug: uploading-currents-data
 output:
-blogdown::html_page:
-highlight: tango
-theme: lumen
+  blogdown::html_page:
+    highlight: tango
 ---
 
 

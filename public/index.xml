@@ -17,8 +17,7 @@
       <pubDate>Thu, 07 Mar 2019 00:00:00 +0000</pubDate>
       
       <guid>/portfolio/uploading-currents-data/</guid>
-      <description>library(tidyverse) library(lubridate) library(ncdf4) library(chron) This is an initial function to pull currents data from the HYCOM GOFS 3.1: 41-layer HYCOM + NCODA Global 1/12° Analysis. Data availability varies by time period but this particular function pulls for data that goes back to at least 2018-01-01. Slight modifications to the curl url may be necessary to pull earlier currents data.
-The data resolution varied by latitude in the following manner. The grid is 0.</description>
+      <description>a.sourceLine { display: inline-block; line-height: 1.25; } a.sourceLine { pointer-events: none; color: inherit; text-decoration: inherit; } a.sourceLine:empty { height: 1.2em; } .sourceCode { overflow: visible; } code.sourceCode { white-space: pre; position: relative; } div.sourceCode { margin: 1em 0; } pre.sourceCode { margin: 0; } @media screen { div.sourceCode { overflow: auto; } } @media print { code.sourceCode { white-space: pre-wrap; } a.sourceLine { text-indent: -1em; padding-left: 1em; } } pre.</description>
     </item>
     
     <item>
