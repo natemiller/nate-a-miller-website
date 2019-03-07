@@ -1,0 +1,194 @@
+---
+title: "Function for Uploading HYCOM currents to BigQuery"
+output:
+  html_document:
+    highlight: tango
+    keep_md: yes
+    theme: lumen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, comment = FALSE, message = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ncdf4)
+library(chron)
+```
+
+This is an initial function to pull currents data from the [HYCOM GOFS 3.1: 41-layer HYCOM + NCODA Global 1/12° Analysis](https://www.hycom.org/data/glbv0pt08/expt-93pt0). Data availability varies
+by time period but this particular function pulls for data that goes back to at least `2018-01-01`.
+Slight modifications to the `curl` url may be necessary to pull earlier currents data.  
+
+The data resolution varied by latitude in the following manner. The grid is 0.08 deg lon x 0.08 deg lat 
+between 40S-40N. Poleward of 40S/40N, the grid is 0.08 deg lon x 0.04 deg lat. It spans 80S to 90N.
+The temporal resolution is every 3 hours starting at 0:00 and going to 24:00, thus
+there can be repeats at midnight. To eliminate this, this function starts each day at 0:00 and the last 
+time point is 21:00, leaving 24:00 to be represented by 0:00 of the following day.  
+
+The URL provides the daily data in a NetCDF format (`.nc`), which then needs to be processed.
+The data is stored as two, 3251 x 4500 x 9 array (the depth being the time points),
+one array for the northward currents and one array for the eastward currents.
+
+I have combined the two current vectors into the resultant vector as
+`sqrt(x_current^2 + y_current^2)`
+
+The function below is designed to loop through a series of dates to bulk upload all day for each day
+using `bq load`. 
+
+### ISSUES:
+
+Currently the daily table size appears to be too large to upload in a timely manner 
+to Big Query. The total table is 117,036,000 rows per day and take ~45 - 60 minutes
+to upload and typically times out.   
+
+I am exploring other options for upload (possibly from GCS) or for making the uploads
+smaller.
+
+```{r}
+# date = '2019-01-01'
+
+ 
+process_currents <- function(date) {
+  
+  next_date <- as.Date(date, tz = 'UTC') + lubridate::days(1)
+  
+  print(glue::glue('Downloading Date: {date}' ))
+  
+  #curl command to download data to working directory
+  curl::curl_download(glue::glue(
+'http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&
+var=water_v&north=90.0000&west=0.0000&east=359.9200&south=-80.0000&disableLLSubset
+=on&disableProjSubset=on&horizStride=1&time_start={date}T00%3A00%3A00Z&time_end
+={next_date}T00%3A00%3A00Z&timeStride=1&vertCoord=0.0&addLatLon=true&accept=netcdf'),
+'testing_netcdf.nc')
+  
+  currents_file <- nc_open('./testing_netcdf.nc')
+  
+  lon <- ncvar_get(currents_file, "lon")
+  nlon <- dim(lon)
+
+  lat <- ncvar_get(currents_file, "lat")
+  nlat <- dim(lat)
+  
+  #get times
+  time <- ncvar_get(currents_file, "time")
+  
+  tunits <- ncatt_get(currents_file,"time","units")
+  
+  # convert time -- split the time units string into fields
+  tustr <- strsplit(tunits$value, " ")
+  tdstr <- strsplit(unlist(tustr)[3], "-")
+  tmonth <- as.integer(unlist(tdstr)[2])
+  tday <- as.integer(unlist(tdstr)[3])
+  tyear <- as.integer(unlist(tdstr)[1])
+  new_time <- as.POSIXct(paste0(tyear,'-',tmonth,'-',tday), tz = 'UTC') + 
+                              lubridate::hours(time)
+  
+  
+  #wind speed variables (u, v)
+  x_current.array <- ncvar_get(currents_file, 'water_u')
+  y_current.array <- ncvar_get(currents_file, 'water_v')
+  
+  # NA value
+  x.current.fillvalue <- ncatt_get(currents_file, 'water_u', "_FillValue")
+  y.current.fillvalue <- ncatt_get(currents_file, 'water_v', "_FillValue")
+  
+  #replace fill value with NA
+  x_current.array[x_current.array == x.current.fillvalue$value] <- NA
+  y_current.array[y_current.array == y.current.fillvalue$value] <- NA
+  
+  #specify lon/lat grid
+  lat_grid <- c(seq(-80,-40.04,length.out = 1000), 
+                seq(-40,40,length.out = 1001), 
+                seq(40.04,90,length.out = 1250))
+  lon_grid <- seq(0,359.92, length.out = 4500)
+  lonlat <- expand.grid(lon_grid, lat_grid)
+  
+  #for each time point (ignoring the last timepoint of the day (24:00))
+  for (i in seq(0, 7)) {
+    print(glue::glue('Processing Time: {i}'))
+    # select specified time point
+    x_current.array_day <- x_current.array[,,(i + 1)]
+    y_current.array_day <- y_current.array[,,(i + 1)]
+    
+    # convert to long vector
+    x_current.vec.long <- as.vector(x_current.array_day)
+    y_current.vec.long <- as.vector(y_current.array_day)
+    
+    # convert variable to matrix the length of lat/lon
+    x_current.mat <- matrix(x_current.vec.long, nrow = nlon * nlat, ncol = 1)
+    y_current.mat <- matrix(y_current.vec.long, nrow = nlon * nlat, ncol = 1)
+    
+    #expand lat/lon and bind to wind speed variable
+    #lonlat <- expand.grid(lon, lat)
+    x_current_df <- data.frame(cbind(lonlat, x_current.mat))
+    y_current_df <- data.frame(cbind(lonlat, y_current.mat))
+    
+    #rename fields
+    names(x_current_df) <- c('lon','lat','x_current')
+    names(y_current_df) <- c('lon','lat','y_current')
+    
+    x_current_df$lon <- c(x_current_df$lon)
+    x_current_df$lat <- c(x_current_df$lat)
+    
+    y_current_df$lon <- c(y_current_df$lon)
+    y_current_df$lat <- c(y_current_df$lat)
+    
+    #combine x_current and y_current into combined current vector
+     total_current_vector <-  x_current_df %>%
+        dplyr::mutate(date = date,
+              lat = lat,
+               lon = lon, 
+               current = sqrt(x_current * x_current +
+                                     y_current_df$y_current * y_current_df$y_current),
+               hour = 3 * i) %>%
+       dplyr::select(-x_current)
+
+     #bind current time point to previous time points
+     running_total <- rbind(running_total,total_current_vector)
+     
+   
+  }
+  running_total
+  #save table  TODO: delete table after upload to BQ
+  # readr::write_csv(running_total, 'testing_currents.csv')
+  # #upload to Big Query (in RStudio need complete path to bq function)
+  # command = '/Users/nmiller/Downloads/google-cloud-sdk/bin/bq load
+  #                  --skip_leading_rows=1 --replace=True world-fishing-827:scratch_nate.testing_currents
+  #                   testing_currents.csv date:string,lon:float,lat:float,current_ms:float,hour:integer')
+  # system(command)
+      
+}
+```
+
+#### Example of function for 1 day
+```{r, eval = FALSE}
+
+running_total <- data.frame()
+
+out <- process_currents('2019-01-01')
+```
+
+
+
+
+
+
+
+
+
+```{r, echo = FALSE, eval = FALSE}
+curl::curl_download(
+'http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&var=water_v&north=90.0000&west=0.0000&east=359.9200&south=-80.0000&disableLLSubset=on&disableProjSubset=on&horizStride=1&time_start=2019-01-01T00%3A00%3A00Z&time_end=2019-01-02T00%3A00%3A00Z&timeStride=1&vertCoord=0.0&addLatLon=true&accept=netcdf','testing_netcdf.nc')
+```
+
+
+```{r, echo = FALSE, eval=FALSE}
+command = "/Users/nmiller/Downloads/google-cloud-sdk/bin/bq load --skip_leading_rows=1 --replace=True world-fishing-827:scratch_nate.testing_r iris.csv Sepal_Length:float,Sepal_Width:float,Petal_Length:float,Petal_Width:float,Species:string"
+system(command)
+```
+
