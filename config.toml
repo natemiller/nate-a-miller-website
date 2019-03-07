@@ -47,8 +47,8 @@ googleAnalytics = ""
 
   [params.social]
   email         = "natemiller77@gmail.com"
-  twitter       = "full profile url in twitter"
-  linkedin      = "full profile url in linkedin"
-  github        = "full profile url in github"
+  twitter       = "https://twitter.com/na_miller_"
+  linkedin      = "https://www.linkedin.com/in/nathan-miller-07b636102/"
+  github        = "https://github.com/natemiller"
   
   ignoreFiles = ["\\.Rmd$", "\\.Rmarkdown$", "_files$", "_cache$"]

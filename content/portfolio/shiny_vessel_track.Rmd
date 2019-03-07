@@ -1,5 +1,5 @@
 ---
-showonlyimage: true
+showonlyimage: false
 title: "Shiny Vessel Tracks"
 image: "img/portfolio/vessel_track_colors.png"
 description: "Quick Shiny dashboard tool for exploring vessel tracks, illustrating the use of 
