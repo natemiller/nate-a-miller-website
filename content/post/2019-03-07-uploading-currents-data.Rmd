@@ -1,11 +1,12 @@
 ---
-title: "Function for Uploading HYCOM currents to BigQuery"
-output:
-  html_document:
-    highlight: tango
-    keep_md: yes
-    theme: lumen
+title: Uploading Currents Data
+author: Nate Miller
+date: '2019-03-07'
+slug: uploading-currents-data
+categories: []
+tags: []
 ---
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, comment = FALSE, message = FALSE)
@@ -191,4 +192,3 @@ curl::curl_download(
 command = "/Users/nmiller/Downloads/google-cloud-sdk/bin/bq load --skip_leading_rows=1 --replace=True world-fishing-827:scratch_nate.testing_r iris.csv Sepal_Length:float,Sepal_Width:float,Petal_Length:float,Petal_Width:float,Species:string"
 system(command)
 ```
-
