@@ -1,10 +1,8 @@
 ---
 title: "Function for Uploading HYCOM currents to BigQuery"
 output:
-  html_document:
+  blogdown::html_page:
     highlight: tango
-    keep_md: yes
-    theme: lumen
 ---
 
 ```{r setup, include=FALSE}

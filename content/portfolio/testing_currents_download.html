@@ -1,18 +1,78 @@
 ---
 title: "Function for Uploading HYCOM currents to BigQuery"
 output:
-  html_document:
+  blogdown::html_page:
     highlight: tango
-    keep_md: yes
-    theme: lumen
 ---
 
+<style type="text/css">
+a.sourceLine { display: inline-block; line-height: 1.25; }
+a.sourceLine { pointer-events: none; color: inherit; text-decoration: inherit; }
+a.sourceLine:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode { white-space: pre; position: relative; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+code.sourceCode { white-space: pre-wrap; }
+a.sourceLine { text-indent: -1em; padding-left: 1em; }
+}
+pre.numberSource a.sourceLine
+  { position: relative; left: -4em; }
+pre.numberSource a.sourceLine::before
+  { content: attr(title);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; pointer-events: all; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+    color: #aaaaaa;
+  }
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+div.sourceCode
+  { background-color: #f8f8f8; }
+@media screen {
+a.sourceLine::before { text-decoration: underline; }
+}
+code span.al { color: #ef2929; } /* Alert */
+code span.an { color: #8f5902; font-weight: bold; font-style: italic; } /* Annotation */
+code span.at { color: #c4a000; } /* Attribute */
+code span.bn { color: #0000cf; } /* BaseN */
+code span.cf { color: #204a87; font-weight: bold; } /* ControlFlow */
+code span.ch { color: #4e9a06; } /* Char */
+code span.cn { color: #000000; } /* Constant */
+code span.co { color: #8f5902; font-style: italic; } /* Comment */
+code span.cv { color: #8f5902; font-weight: bold; font-style: italic; } /* CommentVar */
+code span.do { color: #8f5902; font-weight: bold; font-style: italic; } /* Documentation */
+code span.dt { color: #204a87; } /* DataType */
+code span.dv { color: #0000cf; } /* DecVal */
+code span.er { color: #a40000; font-weight: bold; } /* Error */
+code span.ex { } /* Extension */
+code span.fl { color: #0000cf; } /* Float */
+code span.fu { color: #000000; } /* Function */
+code span.im { } /* Import */
+code span.in { color: #8f5902; font-weight: bold; font-style: italic; } /* Information */
+code span.kw { color: #204a87; font-weight: bold; } /* Keyword */
+code span.op { color: #ce5c00; font-weight: bold; } /* Operator */
+code span.ot { color: #8f5902; } /* Other */
+code span.pp { color: #8f5902; font-style: italic; } /* Preprocessor */
+code span.sc { color: #000000; } /* SpecialChar */
+code span.ss { color: #4e9a06; } /* SpecialString */
+code span.st { color: #4e9a06; } /* String */
+code span.va { color: #000000; } /* Variable */
+code span.vs { color: #4e9a06; } /* VerbatimString */
+code span.wa { color: #8f5902; font-weight: bold; font-style: italic; } /* Warning */
+</style>
 
 
-<pre class="r"><code>library(tidyverse)
-library(lubridate)
-library(ncdf4)
-library(purrr)</code></pre>
+<pre class="sourceCode r"><code class="sourceCode r"><span class="kw">library</span>(tidyverse)
+<span class="kw">library</span>(lubridate)
+<span class="kw">library</span>(ncdf4)
+<span class="kw">library</span>(purrr)</code></pre>
 <p>This is an initial function to pull currents data from the <a href="https://www.hycom.org/data/glbv0pt08/expt-93pt0">HYCOM GOFS 3.1: 41-layer HYCOM + NCODA Global 1/12° Analysis</a>. Data availability varies
 by time period but this particular function pulls for data that goes back to at least <code>2018-01-01</code>.
 Slight modifications to the <code>curl</code> url may be necessary to pull earlier currents data.</p>
@@ -45,146 +105,146 @@ saving the .CSV prior to uploading to BQ. This implementation took a save proces
 nearly an hour using <code>readr::read_csv</code> and reduced it to ~20 seconds. I also removed the for loops by using <code>purrr</code>,
 which makes the code a bit tidier, but doesn’t really have an effect on the performance. The slowest portion of the entire
 process remains <code>bq load</code> and I don’t have a means of making that process any faster.</p>
-<pre class="r"><code># function to process individual time points within each day
-process_timepoint &lt;- function(index, x_current.array, y_current.array,lonlat, nlat, nlon, date, hour_seq) {
-    print(glue::glue(&#39;Processing Hour: {hour_seq[index]}&#39;))
-    # select specified time point
-    x_current.array_day &lt;- x_current.array[,, index]
-    y_current.array_day &lt;- y_current.array[,, index]
+<pre class="sourceCode r"><code class="sourceCode r"><span class="co"># function to process individual time points within each day</span>
+process_timepoint &lt;-<span class="st"> </span><span class="cf">function</span>(index, x_current.array, y_current.array,lonlat, nlat, nlon, date, hour_seq) {
+    <span class="kw">print</span>(glue<span class="op">::</span><span class="kw">glue</span>(<span class="st">&#39;Processing Hour: {hour_seq[index]}&#39;</span>))
+    <span class="co"># select specified time point</span>
+    x_current.array_day &lt;-<span class="st"> </span>x_current.array[,, index]
+    y_current.array_day &lt;-<span class="st"> </span>y_current.array[,, index]
     
-    # convert to long vector
-    x_current.vec.long &lt;- as.numeric(as.vector(x_current.array_day))
-    y_current.vec.long &lt;- as.numeric(as.vector(y_current.array_day))
+    <span class="co"># convert to long vector</span>
+    x_current.vec.long &lt;-<span class="st"> </span><span class="kw">as.numeric</span>(<span class="kw">as.vector</span>(x_current.array_day))
+    y_current.vec.long &lt;-<span class="st"> </span><span class="kw">as.numeric</span>(<span class="kw">as.vector</span>(y_current.array_day))
     
-    # convert variable to matrix the length of lat/lon
-    x_current.mat &lt;- matrix(x_current.vec.long, nrow = nlon * nlat, ncol = 1)
-    y_current.mat &lt;- matrix(y_current.vec.long, nrow = nlon * nlat, ncol = 1)
+    <span class="co"># convert variable to matrix the length of lat/lon</span>
+    x_current.mat &lt;-<span class="st"> </span><span class="kw">matrix</span>(x_current.vec.long, <span class="dt">nrow =</span> nlon <span class="op">*</span><span class="st"> </span>nlat, <span class="dt">ncol =</span> <span class="dv">1</span>)
+    y_current.mat &lt;-<span class="st"> </span><span class="kw">matrix</span>(y_current.vec.long, <span class="dt">nrow =</span> nlon <span class="op">*</span><span class="st"> </span>nlat, <span class="dt">ncol =</span> <span class="dv">1</span>)
     
-    #expand lat/lon and bind to wind speed variable
-    #lonlat &lt;- expand.grid(lon, lat)
-    x_current_df &lt;- data.frame(cbind(lonlat, x_current.mat))
-    y_current_df &lt;- data.frame(cbind(lonlat, y_current.mat))
+    <span class="co">#expand lat/lon and bind to wind speed variable</span>
+    <span class="co">#lonlat &lt;- expand.grid(lon, lat)</span>
+    x_current_df &lt;-<span class="st"> </span><span class="kw">data.frame</span>(<span class="kw">cbind</span>(lonlat, x_current.mat))
+    y_current_df &lt;-<span class="st"> </span><span class="kw">data.frame</span>(<span class="kw">cbind</span>(lonlat, y_current.mat))
     
-    #rename fields
-    names(x_current_df) &lt;- c(&#39;lon&#39;,&#39;lat&#39;,&#39;x_current&#39;)
-    names(y_current_df) &lt;- c(&#39;lon&#39;,&#39;lat&#39;,&#39;y_current&#39;)
+    <span class="co">#rename fields</span>
+    <span class="kw">names</span>(x_current_df) &lt;-<span class="st"> </span><span class="kw">c</span>(<span class="st">&#39;lon&#39;</span>,<span class="st">&#39;lat&#39;</span>,<span class="st">&#39;x_current&#39;</span>)
+    <span class="kw">names</span>(y_current_df) &lt;-<span class="st"> </span><span class="kw">c</span>(<span class="st">&#39;lon&#39;</span>,<span class="st">&#39;lat&#39;</span>,<span class="st">&#39;y_current&#39;</span>)
     
-    x_current_df$lon &lt;- c(x_current_df$lon)
-    x_current_df$lat &lt;- c(x_current_df$lat)
+    x_current_df<span class="op">$</span>lon &lt;-<span class="st"> </span><span class="kw">c</span>(x_current_df<span class="op">$</span>lon)
+    x_current_df<span class="op">$</span>lat &lt;-<span class="st"> </span><span class="kw">c</span>(x_current_df<span class="op">$</span>lat)
     
-    y_current_df$lon &lt;- c(y_current_df$lon)
-    y_current_df$lat &lt;- c(y_current_df$lat)
+    y_current_df<span class="op">$</span>lon &lt;-<span class="st"> </span><span class="kw">c</span>(y_current_df<span class="op">$</span>lon)
+    y_current_df<span class="op">$</span>lat &lt;-<span class="st"> </span><span class="kw">c</span>(y_current_df<span class="op">$</span>lat)
     
-    #combine x_current and y_current into combined current vector
-     total_current_vector &lt;-  x_current_df %&gt;%
-        dplyr::mutate(date = date,
-                      lat = round(lat, 2),
-                      lon = round(lon, 2),
-                      current = sqrt(x_current * x_current +
-                                     y_current_df$y_current * y_current_df$y_current),
-                      current = ifelse(is.na(current), &#39;&#39;, current),
-                      hour = hour_seq[index]) %&gt;%
-       dplyr::select(-x_current)
+    <span class="co">#combine x_current and y_current into combined current vector</span>
+     total_current_vector &lt;-<span class="st">  </span>x_current_df <span class="op">%&gt;%</span>
+<span class="st">        </span>dplyr<span class="op">::</span><span class="kw">mutate</span>(<span class="dt">date =</span> date,
+                      <span class="dt">lat =</span> <span class="kw">round</span>(lat, <span class="dv">2</span>),
+                      <span class="dt">lon =</span> <span class="kw">round</span>(lon, <span class="dv">2</span>),
+                      <span class="dt">current =</span> <span class="kw">sqrt</span>(x_current <span class="op">*</span><span class="st"> </span>x_current <span class="op">+</span>
+<span class="st">                                     </span>y_current_df<span class="op">$</span>y_current <span class="op">*</span><span class="st"> </span>y_current_df<span class="op">$</span>y_current),
+                      <span class="dt">current =</span> <span class="kw">ifelse</span>(<span class="kw">is.na</span>(current), <span class="st">&#39;&#39;</span>, current),
+                      <span class="dt">hour =</span> hour_seq[index]) <span class="op">%&gt;%</span>
+<span class="st">       </span>dplyr<span class="op">::</span><span class="kw">select</span>(<span class="op">-</span>x_current)
   
 }</code></pre>
-<pre class="r"><code># function to pull data from HYCOM by day, processes all time points within a
-# day and append data to Big Query table.
-process_currents &lt;- function(date) {
+<pre class="sourceCode r"><code class="sourceCode r"><span class="co"># function to pull data from HYCOM by day, processes all time points within a</span>
+<span class="co"># day and append data to Big Query table.</span>
+process_currents &lt;-<span class="st"> </span><span class="cf">function</span>(date) {
   
-  temp_list &lt;- list()
+  temp_list &lt;-<span class="st"> </span><span class="kw">list</span>()
   
-  next_date &lt;- as.Date(date, tz = &#39;UTC&#39;) + lubridate::days(1)
+  next_date &lt;-<span class="st"> </span><span class="kw">as.Date</span>(date, <span class="dt">tz =</span> <span class="st">&#39;UTC&#39;</span>) <span class="op">+</span><span class="st"> </span>lubridate<span class="op">::</span><span class="kw">days</span>(<span class="dv">1</span>)
   
-  print(glue::glue(&#39;Downloading Date: {date}&#39; ))
+  <span class="kw">print</span>(glue<span class="op">::</span><span class="kw">glue</span>(<span class="st">&#39;Downloading Date: {date}&#39;</span> ))
   
-  #curl command to download data to working directory
-  curl::curl_download(glue::glue(
-&#39;http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&amp;var=water_v&amp;north=90.0000&amp;west=0.0000&amp;east=359.9200&amp;south=-80.0000&amp;disableLLSubset=on&amp;disableProjSubset=on&amp;horizStride=1&amp;time_start={date}T00%3A00%3A00Z&amp;time_end={next_date}T00%3A00%3A00Z&amp;timeStride=1&amp;vertCoord=0.0&amp;addLatLon=true&amp;accept=netcdf&#39;),&#39;testing_netcdf.nc&#39;)
+  <span class="co">#curl command to download data to working directory</span>
+  curl<span class="op">::</span><span class="kw">curl_download</span>(glue<span class="op">::</span><span class="kw">glue</span>(
+<span class="st">&#39;http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&amp;var=water_v&amp;north=90.0000&amp;west=0.0000&amp;east=359.9200&amp;south=-80.0000&amp;disableLLSubset=on&amp;disableProjSubset=on&amp;horizStride=1&amp;time_start={date}T00%3A00%3A00Z&amp;time_end={next_date}T00%3A00%3A00Z&amp;timeStride=1&amp;vertCoord=0.0&amp;addLatLon=true&amp;accept=netcdf&#39;</span>),<span class="st">&#39;testing_netcdf.nc&#39;</span>)
 
-  currents_file &lt;- ncdf4::nc_open(&#39;./testing_netcdf.nc&#39;)
+  currents_file &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">nc_open</span>(<span class="st">&#39;./testing_netcdf.nc&#39;</span>)
   
-  lon &lt;- ncdf4::ncvar_get(currents_file, &quot;lon&quot;)
-  nlon &lt;- dim(lon)
+  lon &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncvar_get</span>(currents_file, <span class="st">&quot;lon&quot;</span>)
+  nlon &lt;-<span class="st"> </span><span class="kw">dim</span>(lon)
 
-  lat &lt;- ncdf4::ncvar_get(currents_file, &quot;lat&quot;)
-  nlat &lt;- dim(lat)
+  lat &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncvar_get</span>(currents_file, <span class="st">&quot;lat&quot;</span>)
+  nlat &lt;-<span class="st"> </span><span class="kw">dim</span>(lat)
   
-  #get times
-  time &lt;- ncdf4::ncvar_get(currents_file, &quot;time&quot;)
+  <span class="co">#get times</span>
+  time &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncvar_get</span>(currents_file, <span class="st">&quot;time&quot;</span>)
   
-  tunits &lt;- ncdf4::ncatt_get(currents_file,&quot;time&quot;,&quot;units&quot;)
+  tunits &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncatt_get</span>(currents_file,<span class="st">&quot;time&quot;</span>,<span class="st">&quot;units&quot;</span>)
   
-  # convert time -- split the time units string into fields
-  tustr &lt;- strsplit(tunits$value, &quot; &quot;)
-  tdstr &lt;- strsplit(unlist(tustr)[3], &quot;-&quot;)
-  tmonth &lt;- as.integer(unlist(tdstr)[2])
-  tday &lt;- as.integer(unlist(tdstr)[3])
-  tyear &lt;- as.integer(unlist(tdstr)[1])
-  new_time &lt;- as.POSIXct(paste0(tyear,&#39;-&#39;,tmonth,&#39;-&#39;,tday), tz = &#39;UTC&#39;) + 
-                              lubridate::hours(time)
+  <span class="co"># convert time -- split the time units string into fields</span>
+  tustr &lt;-<span class="st"> </span><span class="kw">strsplit</span>(tunits<span class="op">$</span>value, <span class="st">&quot; &quot;</span>)
+  tdstr &lt;-<span class="st"> </span><span class="kw">strsplit</span>(<span class="kw">unlist</span>(tustr)[<span class="dv">3</span>], <span class="st">&quot;-&quot;</span>)
+  tmonth &lt;-<span class="st"> </span><span class="kw">as.integer</span>(<span class="kw">unlist</span>(tdstr)[<span class="dv">2</span>])
+  tday &lt;-<span class="st"> </span><span class="kw">as.integer</span>(<span class="kw">unlist</span>(tdstr)[<span class="dv">3</span>])
+  tyear &lt;-<span class="st"> </span><span class="kw">as.integer</span>(<span class="kw">unlist</span>(tdstr)[<span class="dv">1</span>])
+  new_time &lt;-<span class="st"> </span><span class="kw">as.POSIXct</span>(<span class="kw">paste0</span>(tyear,<span class="st">&#39;-&#39;</span>,tmonth,<span class="st">&#39;-&#39;</span>,tday), <span class="dt">tz =</span> <span class="st">&#39;UTC&#39;</span>) <span class="op">+</span><span class="st"> </span>
+<span class="st">                              </span>lubridate<span class="op">::</span><span class="kw">hours</span>(time)
   
-  hour_seq &lt;- data.frame(time_c = new_time) %&gt;%
-    mutate(date_c = as.Date(time_c, tz = &#39;UTC&#39;)) %&gt;%
-    filter(date_c == as.Date(date, tz = &#39;UTC&#39;)) %&gt;%
-    mutate(time_hour = lubridate::hour(time_c)) %&gt;%
-    pull(time_hour)
+  hour_seq &lt;-<span class="st"> </span><span class="kw">data.frame</span>(<span class="dt">time_c =</span> new_time) <span class="op">%&gt;%</span>
+<span class="st">    </span><span class="kw">mutate</span>(<span class="dt">date_c =</span> <span class="kw">as.Date</span>(time_c, <span class="dt">tz =</span> <span class="st">&#39;UTC&#39;</span>)) <span class="op">%&gt;%</span>
+<span class="st">    </span><span class="kw">filter</span>(date_c <span class="op">==</span><span class="st"> </span><span class="kw">as.Date</span>(date, <span class="dt">tz =</span> <span class="st">&#39;UTC&#39;</span>)) <span class="op">%&gt;%</span>
+<span class="st">    </span><span class="kw">mutate</span>(<span class="dt">time_hour =</span> lubridate<span class="op">::</span><span class="kw">hour</span>(time_c)) <span class="op">%&gt;%</span>
+<span class="st">    </span><span class="kw">pull</span>(time_hour)
   
-  #wind speed variables (u, v)
-  x_current.array &lt;- ncdf4::ncvar_get(currents_file, &#39;water_u&#39;)
-  y_current.array &lt;- ncdf4::ncvar_get(currents_file, &#39;water_v&#39;)
+  <span class="co">#wind speed variables (u, v)</span>
+  x_current.array &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncvar_get</span>(currents_file, <span class="st">&#39;water_u&#39;</span>)
+  y_current.array &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncvar_get</span>(currents_file, <span class="st">&#39;water_v&#39;</span>)
   
-  # NA value
-  x.current.fillvalue &lt;- ncdf4::ncatt_get(currents_file, &#39;water_u&#39;, &quot;_FillValue&quot;)
-  y.current.fillvalue &lt;- ncdf4::ncatt_get(currents_file, &#39;water_v&#39;, &quot;_FillValue&quot;)
+  <span class="co"># NA value</span>
+  x.current.fillvalue &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncatt_get</span>(currents_file, <span class="st">&#39;water_u&#39;</span>, <span class="st">&quot;_FillValue&quot;</span>)
+  y.current.fillvalue &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">ncatt_get</span>(currents_file, <span class="st">&#39;water_v&#39;</span>, <span class="st">&quot;_FillValue&quot;</span>)
   
-  #replace fill value with NA
-  x_current.array[x_current.array == x.current.fillvalue$value] &lt;- NA_real_
-  y_current.array[y_current.array == y.current.fillvalue$value] &lt;- NA_real_
+  <span class="co">#replace fill value with NA</span>
+  x_current.array[x_current.array <span class="op">==</span><span class="st"> </span>x.current.fillvalue<span class="op">$</span>value] &lt;-<span class="st"> </span><span class="ot">NA_real_</span>
+  y_current.array[y_current.array <span class="op">==</span><span class="st"> </span>y.current.fillvalue<span class="op">$</span>value] &lt;-<span class="st"> </span><span class="ot">NA_real_</span>
   
-  #specify lon/lat grid
-  lat_grid &lt;- c(seq(-80,-40.04,length.out = 1000), 
-                seq(-40,40,length.out = 1001), 
-                seq(40.04,90,length.out = 1250))
-  lon_grid &lt;- seq(0,359.92, length.out = 4500)
-  lonlat &lt;- expand.grid(lon_grid, lat_grid)
+  <span class="co">#specify lon/lat grid</span>
+  lat_grid &lt;-<span class="st"> </span><span class="kw">c</span>(<span class="kw">seq</span>(<span class="op">-</span><span class="dv">80</span>,<span class="op">-</span><span class="fl">40.04</span>,<span class="dt">length.out =</span> <span class="dv">1000</span>), 
+                <span class="kw">seq</span>(<span class="op">-</span><span class="dv">40</span>,<span class="dv">40</span>,<span class="dt">length.out =</span> <span class="dv">1001</span>), 
+                <span class="kw">seq</span>(<span class="fl">40.04</span>,<span class="dv">90</span>,<span class="dt">length.out =</span> <span class="dv">1250</span>))
+  lon_grid &lt;-<span class="st"> </span><span class="kw">seq</span>(<span class="dv">0</span>,<span class="fl">359.92</span>, <span class="dt">length.out =</span> <span class="dv">4500</span>)
+  lonlat &lt;-<span class="st"> </span><span class="kw">expand.grid</span>(lon_grid, lat_grid)
   
-  #for each time point (ignoring the last timepoint of the day (24:00))
+  <span class="co">#for each time point (ignoring the last timepoint of the day (24:00))</span>
  
-  temp_list &lt;- setNames(purrr::map(.x = seq_along(hour_seq), 
-             .f = process_timepoint,
+  temp_list &lt;-<span class="st"> </span><span class="kw">setNames</span>(purrr<span class="op">::</span><span class="kw">map</span>(<span class="dt">.x =</span> <span class="kw">seq_along</span>(hour_seq), 
+             <span class="dt">.f =</span> process_timepoint,
              x_current.array, 
              y_current.array,
              lonlat,
              nlat,
              nlon,
              date,
-             hour_seq), nm = hour_seq)
+             hour_seq), <span class="dt">nm =</span> hour_seq)
   
   
-  #running_total
-  #save table
-  print(&#39;Saving File&#39;)
-  day_total_df &lt;- data.table::rbindlist(temp_list)
-  data.table::fwrite(day_total_df, &#39;./testing_currents.csv&#39;)
-  print(&#39;Uploading to BigQuery&#39;)
-   #upload to Big Query (in RStudio need complete path to bq function)
-  command = &#39;bq load --skip_leading_rows=1 --noreplace world-fishing-827:scratch_nate.testing_currents testing_currents.csv lon:float,lat:float,date:date,current:float,hour:integer&#39;
-  system(command)
-   # delete .CSV 
-  system(&#39;rm testing_currents.csv&#39;)
+  <span class="co">#running_total</span>
+  <span class="co">#save table</span>
+  <span class="kw">print</span>(<span class="st">&#39;Saving File&#39;</span>)
+  day_total_df &lt;-<span class="st"> </span>data.table<span class="op">::</span><span class="kw">rbindlist</span>(temp_list)
+  data.table<span class="op">::</span><span class="kw">fwrite</span>(day_total_df, <span class="st">&#39;./testing_currents.csv&#39;</span>)
+  <span class="kw">print</span>(<span class="st">&#39;Uploading to BigQuery&#39;</span>)
+   <span class="co">#upload to Big Query (in RStudio need complete path to bq function)</span>
+  command =<span class="st"> &#39;bq load --skip_leading_rows=1 --noreplace world-fishing-827:scratch_nate.testing_currents testing_currents.csv lon:float,lat:float,date:date,current:float,hour:integer&#39;</span>
+  <span class="kw">system</span>(command)
+   <span class="co"># delete .CSV </span>
+  <span class="kw">system</span>(<span class="st">&#39;rm testing_currents.csv&#39;</span>)
       
 }</code></pre>
 <div id="example-of-function-for-1-day" class="section level4">
 <h4>Example of function for 1 day</h4>
-<pre class="r"><code>process_currents(&#39;2019-01-01&#39;)</code></pre>
+<pre class="sourceCode r"><code class="sourceCode r"><span class="kw">process_currents</span>(<span class="st">&#39;2019-01-01&#39;</span>)</code></pre>
 </div>
 <div id="example-of-function-for-3-days" class="section level4">
 <h4>Example of function for 3 days</h4>
-<pre class="r"><code>date_sequence &lt;- seq.Date(as.Date(&#39;2018-01-01&#39;, tz = &#39;UTC&#39;),
-                          as.Date(&#39;2018-01-03&#39;, tz = &#39;UTC&#39;), 
-                          by = &#39;day&#39;)
+<pre class="sourceCode r"><code class="sourceCode r">date_sequence &lt;-<span class="st"> </span><span class="kw">seq.Date</span>(<span class="kw">as.Date</span>(<span class="st">&#39;2018-01-01&#39;</span>, <span class="dt">tz =</span> <span class="st">&#39;UTC&#39;</span>),
+                          <span class="kw">as.Date</span>(<span class="st">&#39;2018-01-03&#39;</span>, <span class="dt">tz =</span> <span class="st">&#39;UTC&#39;</span>), 
+                          <span class="dt">by =</span> <span class="st">&#39;day&#39;</span>)
 
-purrr::map(.x = date_sequence,
-           .f = process_currents)</code></pre>
+purrr<span class="op">::</span><span class="kw">map</span>(<span class="dt">.x =</span> date_sequence,
+           <span class="dt">.f =</span> process_currents)</code></pre>
 </div>
 </div>
