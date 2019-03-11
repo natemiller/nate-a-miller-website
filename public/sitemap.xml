@@ -3,11 +3,6 @@
   xmlns:xhtml="http://www.w3.org/1999/xhtml">
   
   <url>
-    <loc>/portfolio/uploading-currents-data/</loc>
-    <lastmod>2019-03-07T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
     <loc>/about/</loc>
     <lastmod>2019-01-04T00:00:00+00:00</lastmod>
   </url>
@@ -28,6 +23,10 @@
   </url>
   
   <url>
+    <loc>/portfolio/testing_currents_download/</loc>
+  </url>
+  
+  <url>
     <loc>/portfolio/iccat_transshipment_analysis_2017_2018/</loc>
   </url>
   
@@ -38,7 +37,7 @@
   
   <url>
     <loc>/</loc>
-    <lastmod>2019-03-07T00:00:00+00:00</lastmod>
+    <lastmod>2015-07-23T21:13:14-05:00</lastmod>
     <priority>0</priority>
   </url>
   
@@ -50,7 +49,7 @@
   
   <url>
     <loc>/portfolio/</loc>
-    <lastmod>2019-03-07T00:00:00+00:00</lastmod>
+    <lastmod>2015-07-23T21:13:14-05:00</lastmod>
     <priority>0</priority>
   </url>
   
