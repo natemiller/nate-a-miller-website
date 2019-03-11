@@ -120,7 +120,10 @@ process_currents <- function(date) {
   
   #curl command to download data to working directory
   curl::curl_download(glue::glue(
-'http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&var=water_v&north=90.0000&west=0.0000&east=359.9200&south=-80.0000&disableLLSubset=on&disableProjSubset=on&horizStride=1&time_start={date}T00%3A00%3A00Z&time_end={next_date}T00%3A00%3A00Z&timeStride=1&vertCoord=0.0&addLatLon=true&accept=netcdf'),'testing_netcdf.nc')
+'http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&
+var=water_v&north=90.0000&west=0.0000&east=359.9200&south=-80.0000&
+disableLLSubset=on&disableProjSubset=on&horizStride=1&
+time_start={date}T00%3A00%3A00Z&time_end={next_date}T00%3A00%3A00Z&timeStride=1&vertCoord=0.0&addLatLon=true&accept=netcdf'),'testing_netcdf.nc')
 
   currents_file <- ncdf4::nc_open('./testing_netcdf.nc')
   
@@ -189,7 +192,9 @@ process_currents <- function(date) {
   data.table::fwrite(day_total_df, './testing_currents.csv')
   print('Uploading to BigQuery')
    #upload to Big Query (in RStudio need complete path to bq function)
-  command = 'bq load --skip_leading_rows=1 --noreplace world-fishing-827:scratch_nate.testing_currents testing_currents.csv lon:float,lat:float,date:date,current:float,hour:integer'
+  command = 'bq load --skip_leading_rows=1 --noreplace 
+  world-fishing-827:scratch_nate.testing_currents 
+  testing_currents.csv lon:float,lat:float,date:date,current:float,hour:integer'
   system(command)
    # delete .CSV 
   system('rm testing_currents.csv')

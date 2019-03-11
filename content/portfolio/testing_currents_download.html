@@ -159,7 +159,10 @@ process_currents &lt;-<span class="st"> </span><span class="cf">function</span>(
   
   <span class="co">#curl command to download data to working directory</span>
   curl<span class="op">::</span><span class="kw">curl_download</span>(glue<span class="op">::</span><span class="kw">glue</span>(
-<span class="st">&#39;http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&amp;var=water_v&amp;north=90.0000&amp;west=0.0000&amp;east=359.9200&amp;south=-80.0000&amp;disableLLSubset=on&amp;disableProjSubset=on&amp;horizStride=1&amp;time_start={date}T00%3A00%3A00Z&amp;time_end={next_date}T00%3A00%3A00Z&amp;timeStride=1&amp;vertCoord=0.0&amp;addLatLon=true&amp;accept=netcdf&#39;</span>),<span class="st">&#39;testing_netcdf.nc&#39;</span>)
+<span class="st">&#39;http://ncss.hycom.org/thredds/ncss/GLBv0.08/expt_93.0/uv3z?var=water_u&amp;</span>
+<span class="st">var=water_v&amp;north=90.0000&amp;west=0.0000&amp;east=359.9200&amp;south=-80.0000&amp;</span>
+<span class="st">disableLLSubset=on&amp;disableProjSubset=on&amp;horizStride=1&amp;</span>
+<span class="st">time_start={date}T00%3A00%3A00Z&amp;time_end={next_date}T00%3A00%3A00Z&amp;timeStride=1&amp;vertCoord=0.0&amp;addLatLon=true&amp;accept=netcdf&#39;</span>),<span class="st">&#39;testing_netcdf.nc&#39;</span>)
 
   currents_file &lt;-<span class="st"> </span>ncdf4<span class="op">::</span><span class="kw">nc_open</span>(<span class="st">&#39;./testing_netcdf.nc&#39;</span>)
   
@@ -228,7 +231,9 @@ process_currents &lt;-<span class="st"> </span><span class="cf">function</span>(
   data.table<span class="op">::</span><span class="kw">fwrite</span>(day_total_df, <span class="st">&#39;./testing_currents.csv&#39;</span>)
   <span class="kw">print</span>(<span class="st">&#39;Uploading to BigQuery&#39;</span>)
    <span class="co">#upload to Big Query (in RStudio need complete path to bq function)</span>
-  command =<span class="st"> &#39;bq load --skip_leading_rows=1 --noreplace world-fishing-827:scratch_nate.testing_currents testing_currents.csv lon:float,lat:float,date:date,current:float,hour:integer&#39;</span>
+  command =<span class="st"> &#39;bq load --skip_leading_rows=1 --noreplace </span>
+<span class="st">  world-fishing-827:scratch_nate.testing_currents </span>
+<span class="st">  testing_currents.csv lon:float,lat:float,date:date,current:float,hour:integer&#39;</span>
   <span class="kw">system</span>(command)
    <span class="co"># delete .CSV </span>
   <span class="kw">system</span>(<span class="st">&#39;rm testing_currents.csv&#39;</span>)
